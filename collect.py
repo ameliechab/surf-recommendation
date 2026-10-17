@@ -37,33 +37,45 @@ WEATHER_FIELDS = {
 }
 
 
-def fetch_hourly(url: str, lat: float, lon: float, fields: dict, extra: dict | None = None) -> pd.DataFrame:
+PAUSE_BETWEEN_CALLS_S = 2  # pour ne pas solliciter Open-Meteo trop vite
+
+
+def _get_json(url: str, params: dict):
+    for attempt in range(3):
+        try:
+            # Open-Meteo répond parfois lentement : 10 s pour se connecter, 90 s pour répondre
+            resp = requests.get(url, params=params, timeout=(10, 90))
+            if resp.status_code == 200:
+                return resp.json()
+            error = f"HTTP {resp.status_code} : {resp.text[:200]}"
+        except requests.RequestException as exc:
+            error = str(exc)
+        time.sleep(5 * 3 ** attempt)  # 5 s, 15 s, 45 s
+    raise RuntimeError(f"{url} : {error}")
+
+
+def _to_df(payload: dict, fields: dict) -> pd.DataFrame:
+    df = pd.DataFrame(payload["hourly"]).rename(columns=fields)
+    df["forecast_datetime"] = pd.to_datetime(df.pop("time"), utc=True)
+    return df
+
+
+def fetch_hourly(url: str, spots: list[dict], fields: dict, extra: dict | None = None) -> dict:
+    """Une seule requête pour plusieurs spots (Open-Meteo accepte des listes de
+    coordonnées). Renvoie {spot_id: DataFrame horaire}."""
     params = {
-        "latitude": lat,
-        "longitude": lon,
+        "latitude": ",".join(str(s["localisation_lat"]) for s in spots),
+        "longitude": ",".join(str(s["localisation_lon"]) for s in spots),
         "hourly": ",".join(fields),
         "past_days": config.PAST_DAYS,
         "forecast_days": config.FORECAST_DAYS,
         "timezone": "GMT",
         **(extra or {}),
     }
-    for attempt in range(3):
-        try:
-            # Open-Meteo répond parfois lentement : 10 s pour se connecter, 60 s pour répondre
-            resp = requests.get(url, params=params, timeout=(10, 60))
-            if resp.status_code == 200:
-                break
-            error = f"HTTP {resp.status_code} : {resp.text[:200]}"
-        except requests.RequestException as exc:
-            error = str(exc)
-        time.sleep(5 * 3 ** attempt)  # 5 s, 15 s, 45 s
-    else:
-        raise RuntimeError(f"{url} : {error}")
-
-    hourly = resp.json()["hourly"]
-    df = pd.DataFrame(hourly).rename(columns=fields)
-    df["forecast_datetime"] = pd.to_datetime(df.pop("time"), utc=True)
-    return df
+    payload = _get_json(url, params)
+    if isinstance(payload, dict):  # un seul spot : Open-Meteo renvoie un objet, pas une liste
+        payload = [payload]
+    return {s["spot_id"]: _to_df(p, fields) for s, p in zip(spots, payload)}
 
 
 def build_rows(spot_id: str, marine: pd.DataFrame, weather: pd.DataFrame, retrieved_at: str) -> list[dict]:
@@ -93,33 +105,39 @@ def main():
         sys.exit("Aucun spot dans surf_spot_properties : lance d'abord sync_sheets.py.")
 
     retrieved_at = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
-    all_rows, failed = [], []
+    all_rows = []
 
-    def collect_spot(spot) -> bool:
-        spot_id, lat, lon = spot["spot_id"], spot["localisation_lat"], spot["localisation_lon"]
+    def collect(batch: list[dict]) -> list[dict]:
+        """Collecte un groupe de spots ; renvoie les spots en échec."""
         try:
-            marine = fetch_hourly(config.MARINE_API_URL, lat, lon, MARINE_FIELDS)
-            weather = fetch_hourly(config.WEATHER_API_URL, lat, lon, WEATHER_FIELDS, {"wind_speed_unit": "kmh"})
-            rows = build_rows(spot_id, marine, weather, retrieved_at)
+            marine = fetch_hourly(config.MARINE_API_URL, batch, MARINE_FIELDS)
+            time.sleep(PAUSE_BETWEEN_CALLS_S)
+            weather = fetch_hourly(config.WEATHER_API_URL, batch, WEATHER_FIELDS, {"wind_speed_unit": "kmh"})
+        except Exception as exc:
+            print(f"{', '.join(s['spot_id'] for s in batch)} : ERREUR {exc}", file=sys.stderr)
+            return batch
+        for spot in batch:
+            spot_id = spot["spot_id"]
+            rows = build_rows(spot_id, marine[spot_id], weather[spot_id], retrieved_at)
             if not args.dry_run:
                 db.upsert(client, "marine_forecast", rows, on_conflict="spot_id,forecast_datetime")
             all_rows.extend(rows)
             no_tide = sum(r["tide_stage"] is None for r in rows)
             print(f"{spot_id} : {len(rows)} heures ({no_tide} sans marée)")
-            return True
-        except Exception as exc:  # un spot en erreur n'arrête pas les autres
-            print(f"{spot_id} : ERREUR {exc}", file=sys.stderr)
-            return False
+        return []
 
-    for spot in spots:
-        if not collect_spot(spot):
-            failed.append(spot)
+    # 1er passage : tous les spots en une requête par API (2 appels au total)
+    failed = collect(spots)
 
+    # Si ça échoue : pause, puis un spot à la fois, en douceur
     if failed:
-        # 2e passage pour les spots en échec, après une pause (lenteur passagère d'Open-Meteo)
-        print(f"Nouvel essai dans 60 s pour : {', '.join(s['spot_id'] for s in failed)}")
+        print("Nouvel essai spot par spot dans 60 s")
         time.sleep(60)
-        failed = [spot for spot in failed if not collect_spot(spot)]
+        retry = failed
+        failed = []
+        for spot in retry:
+            failed += collect([spot])
+            time.sleep(PAUSE_BETWEEN_CALLS_S)
 
     if args.dry_run and all_rows:
         pd.DataFrame(all_rows).to_csv("forecast_preview.csv", index=False)
