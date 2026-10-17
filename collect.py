@@ -47,15 +47,16 @@ def fetch_hourly(url: str, lat: float, lon: float, fields: dict, extra: dict | N
         "timezone": "GMT",
         **(extra or {}),
     }
-    for attempt in range(4):
+    for attempt in range(3):
         try:
-            resp = requests.get(url, params=params, timeout=30)
+            # Open-Meteo répond parfois lentement : 10 s pour se connecter, 60 s pour répondre
+            resp = requests.get(url, params=params, timeout=(10, 60))
             if resp.status_code == 200:
                 break
             error = f"HTTP {resp.status_code} : {resp.text[:200]}"
         except requests.RequestException as exc:
             error = str(exc)
-        time.sleep(2 ** (attempt + 1))
+        time.sleep(5 * 3 ** attempt)  # 5 s, 15 s, 45 s
     else:
         raise RuntimeError(f"{url} : {error}")
 
@@ -93,7 +94,8 @@ def main():
 
     retrieved_at = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     all_rows, failed = [], []
-    for spot in spots:
+
+    def collect_spot(spot) -> bool:
         spot_id, lat, lon = spot["spot_id"], spot["localisation_lat"], spot["localisation_lon"]
         try:
             marine = fetch_hourly(config.MARINE_API_URL, lat, lon, MARINE_FIELDS)
@@ -101,12 +103,23 @@ def main():
             rows = build_rows(spot_id, marine, weather, retrieved_at)
             if not args.dry_run:
                 db.upsert(client, "marine_forecast", rows, on_conflict="spot_id,forecast_datetime")
-            all_rows += rows
+            all_rows.extend(rows)
             no_tide = sum(r["tide_stage"] is None for r in rows)
             print(f"{spot_id} : {len(rows)} heures ({no_tide} sans marée)")
+            return True
         except Exception as exc:  # un spot en erreur n'arrête pas les autres
-            failed.append(spot_id)
             print(f"{spot_id} : ERREUR {exc}", file=sys.stderr)
+            return False
+
+    for spot in spots:
+        if not collect_spot(spot):
+            failed.append(spot)
+
+    if failed:
+        # 2e passage pour les spots en échec, après une pause (lenteur passagère d'Open-Meteo)
+        print(f"Nouvel essai dans 60 s pour : {', '.join(s['spot_id'] for s in failed)}")
+        time.sleep(60)
+        failed = [spot for spot in failed if not collect_spot(spot)]
 
     if args.dry_run and all_rows:
         pd.DataFrame(all_rows).to_csv("forecast_preview.csv", index=False)
@@ -114,7 +127,7 @@ def main():
 
     if failed:
         # code de sortie 1 : GitHub Actions ne lancera pas le scoring
-        sys.exit(f"Collecte en échec pour : {', '.join(failed)}")
+        sys.exit(f"Collecte en échec pour : {', '.join(s['spot_id'] for s in failed)}")
 
 
 if __name__ == "__main__":
