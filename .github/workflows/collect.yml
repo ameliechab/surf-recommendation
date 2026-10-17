@@ -19,6 +19,11 @@ jobs:
           python-version: "3.13"
           cache: pip
       - run: pip install -r requirements.txt
+      - run: python sync_sheets.py
+        env:
+          GID_SPOT_PROPERTIES: ${{ vars.GID_SPOT_PROPERTIES }}
+          GID_SPOT_CONDITIONS: ${{ vars.GID_SPOT_CONDITIONS }}
+          GID_LEVEL_CONDITIONS: ${{ vars.GID_LEVEL_CONDITIONS }}
       - run: python collect.py
       # Étape suivante, quand score.py existera (ne tourne que si la collecte a réussi) :
       # - run: python score.py
