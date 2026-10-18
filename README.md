@@ -1,144 +1,164 @@
-# surf-recommendation (FindYourWave)
+# FindYourWave · surf-recommendation
 
-Recommandation de spots de surf en Bretagne selon le niveau du surfeur et les prévisions.
+Recommandation de spots de surf en Bretagne, heure par heure, selon le niveau du surfeur.
+
+Ce dépôt contient le **pipeline de données** du projet : il charge le référentiel des spots, collecte les prévisions océan et météo trois fois par jour, calcule la marée et prépare la table des scores. Il applique les specs du document *FindYourWave : Algorithme de recommandation pour le surf* (v3).
 
 ```
-Google Sheet (référentiels)  ──sync_sheets.py──►  ┌──────────────────────────┐
-                                                  │  Supabase (PostgreSQL)   │ ◄── VS Code (SQLTools) / DBeaver
-Open-Meteo Marine + Weather  ──collect.py─────►   │  5 tables                │ ◄── Streamlit (plus tard)
-                                                  └──────────────────────────┘
-GitHub Actions lance collect.py 3 fois par jour.
+Google Sheet (référentiels, saisis à la main)
+        │  sync_sheets.py : nettoyage + contrôles, tout ou rien
+        ▼
+┌──────────────────────────────────────────────┐
+│  Supabase (PostgreSQL), 5 tables             │
+│  surf_spot_properties                        │
+│  surf_spot_conditions_reference              │
+│  surf_level_conditions_reference             │
+│  marine_forecast      ◄── collect.py ◄── Open-Meteo Marine + Weather
+│  spot_hour_scores     ◄── score.py (à venir) │
+└──────────────────────────────────────────────┘
+        ▲
+GitHub Actions : sync + collecte à 4 h, 11 h et 17 h UTC
 ```
+
+**État :** 14 spots, 5 niveaux, 216 heures de prévisions par spot (J-1 à J+8), rafraîchies 3 fois par jour. Les données sont vérifiées par les requêtes SQL du dossier `sql/` (voir [Qualité des données](#qualité-des-données)). Le calcul des scores (`score.py`) est la prochaine étape.
+
+## Stack
+
+| Brique | Rôle |
+|---|---|
+| Python 3.13 (pandas, requests, supabase-py) | Scripts d'ingestion et de calcul |
+| Supabase (PostgreSQL) | Stockage, contraintes d'intégrité, API en lecture |
+| Google Sheets | Saisie des référentiels par un humain (spots, conditions idéales, seuils par niveau) |
+| Open-Meteo Marine + Weather | Prévisions horaires gratuites, sans clé |
+| GitHub Actions | Planification (cron) et exécution, secrets chiffrés |
+
+## Contenu du dépôt
 
 | Fichier | Rôle |
 |---|---|
-| `sql/001_schema.sql` | Crée les 5 tables du doc : `surf_spot_properties`, `surf_spot_conditions_reference`, `surf_level_conditions_reference`, `marine_forecast`, `spot_hour_scores` |
-| `sync_sheets.py` | Lit les 3 onglets « Ref - … » du Sheet, vérifie les valeurs et les charge dans Supabase |
-| `collect.py` | Appelle Open-Meteo pour chaque spot, calcule la marée et remplit `marine_forecast` (version « production » de `test_open_meteo.py`) |
-| `tide.py` | Calcul de `tide_level_pct`, `tide_direction`, `tide_stage` (section « Calcul de tide_stage » du doc v3) |
-| `config.py`, `db.py` | Paramètres (`.env`) et connexion Supabase |
-| `test_open_meteo.py` | Ton script d'exploration, gardé tel quel |
-| `workflows_a_deplacer/` | Automatisation GitHub Actions, à mettre dans `.github/workflows/` |
-| `tests/` | Tests hors ligne (`python -m pytest tests`) |
+| `sql/001_schema.sql` | Les 5 tables du doc, avec leurs contraintes, les droits et la sécurité (RLS) |
+| `sql/002_grants.sql` | Droits d'accès de l'API Supabase (déjà inclus à la fin de 001) |
+| `sql/003_checks.sql` | 20 contrôles d'alimentation : référentiels, fraîcheur, trous, valeurs vides, plausibilité |
+| `sql/004_null_columns.sql` | Taux de remplissage de chaque colonne de chaque table |
+| `sql/005_tide_check.sql` | Vérification du calcul de la marée contre la hauteur d'eau brute |
+| `sync_sheets.py` | Google Sheet → 3 tables de référence |
+| `collect.py` | Open-Meteo → `marine_forecast` |
+| `tide.py` | Calcul de `tide_level_pct`, `tide_direction`, `tide_stage` |
+| `config.py`, `db.py` | Paramètres (lus dans `.env` ou les secrets GitHub) et connexion Supabase |
+| `tests/test_pipeline.py` | Tests unitaires hors ligne (marée, rejet des dates du Sheet, assemblage des lignes) |
+| `.github/workflows/` | `collect.yml` (3×/jour) et `sync_sheets.yml` (manuel) |
 
----
+## Modèle de données
 
-## Pas à pas (Windows + VS Code)
+Les tables reprennent la section « Modèle de données » du doc. Les choix d'implémentation sont indiqués à droite.
 
-Toutes les commandes se tapent dans le terminal de VS Code (**Terminal → Nouveau terminal**), **depuis le dossier `surf-recommendation`**. Si VS Code a ouvert le dossier parent `FindYourWave`, tape d'abord :
+| Table | Grain | Source | Choix d'implémentation |
+|---|---|---|---|
+| `surf_spot_properties` | 1 ligne par spot | Sheet « Ref - surf_spot_properties » | `spot_id` en clé, en minuscules. Coordonnées et orientation bornées par des CHECK. |
+| `surf_spot_conditions_reference` | 1 ligne par spot | Sheet « Ref - surf_spot_conditions_ref » | Clé étrangère vers le spot. `ideal_tide_stage` vaut `toutes` par défaut. Les fenêtres circulaires (ex. 330 → 30) sont acceptées. |
+| `surf_level_conditions_reference` | 1 ligne par niveau | Sheet « Ref - surf_level_conditions_ref » | Les CHECK imposent `min ≤ idéal min ≤ idéal max ≤ max` : un seuil mal saisi est refusé par la base elle-même. |
+| `marine_forecast` | 1 ligne par spot et par heure | Open-Meteo + `tide.py` | Unicité `(spot_id, forecast_datetime)` : chaque collecte met à jour les heures existantes, sans doublon. |
+| `spot_hour_scores` | 1 ligne par spot, heure et niveau | `score.py` (à venir) | Les CHECK garantissent qu'un créneau non éligible a une raison et pas de score global. |
 
-```powershell
-cd surf-recommendation
-```
+Les « enum » du doc sont des CHECK sur du texte plutôt que des types ENUM Postgres : ajouter une valeur revient à modifier une ligne.
 
-La ligne du terminal doit finir par `...\FindYourWave\surf-recommendation>`.
+**Sécurité.** Row Level Security est activé partout, avec une politique de lecture seule pour la clé publique (la future app Streamlit). Seuls les scripts écrivent, avec la clé secrète. Cette clé n'est jamais dans le code : elle vit dans `.env` en local (exclu de Git) et dans les *Secrets* GitHub pour l'automatisation.
 
-### 1. Recréer l'environnement Python
+## Ce que fait le code, par rapport aux specs
 
-Ton `.venv` a été créé dans l'ancien dossier `Projets Data\surf-recommendation`, avant d'être déplacé dans `FindYourWave`. Un venv déplacé casse `pip` et l'activation. Le plus simple est de le recréer :
+### 1. Référentiels : `sync_sheets.py`
 
-```powershell
-Remove-Item -Recurse -Force .venv
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-```
+Le doc prévoit une saisie humaine dans Google Sheets. Le script lit chaque onglet (export CSV en ligne, ou un `.xlsx` local avec `--xlsx`) puis applique les transformations de la colonne « Transfo » du doc :
 
-- Si PowerShell refuse l'activation (« l'exécution de scripts est désactivée sur ce système »), lance une fois `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, réponds `O`, puis relance la ligne d'activation.
-- `(.venv)` doit apparaître au début de la ligne du terminal.
-- Dans VS Code : `Ctrl+Shift+P` → **Python: Select Interpreter** → choisis celui qui contient `.venv`.
-
-Vérification : `python -m pytest tests` affiche `4 passed`.
-
-### 2. Créer les tables dans Supabase
-
-1. Dans ton projet Supabase : menu de gauche **SQL Editor** → **New query**.
-2. Colle tout le contenu de `sql/001_schema.sql` → **Run**. Tu dois voir « Success. No rows returned ».
-3. Si tu as déjà lancé une ancienne version de `001_schema.sql` (sans les droits à la fin), lance aussi `sql/002_grants.sql` de la même façon. Sinon, les scripts Python reçoivent « permission denied for table » : depuis mai 2026, Supabase n'ouvre plus automatiquement les nouvelles tables à son API.
-4. Menu **Table Editor** : les 5 tables apparaissent, et `surf_level_conditions_reference` contient déjà les 5 niveaux.
-
-> L'intégration GitHub proposée par Supabase (Project Settings → Integrations) n'est pas utile pour le MVP : elle sert aux *branches* Supabase (une base de test par branche Git, payante) et aux migrations gérées par la CLI Supabase. Ici, c'est GitHub Actions qui parle à Supabase, avec les secrets de l'étape 7.
-
-> Si tu avais déjà créé des tables avec les mêmes noms, le script ne les modifie pas (`create table if not exists`). Dans ce cas, supprime-les d'abord (Table Editor → clic droit → Delete table), ou dis-le-moi et je ferai un script de migration.
-
-### 3. Remplir le fichier `.env`
-
-1. Dans VS Code, duplique `.env.example` et renomme la copie en `.env` (exactement, avec le point).
-2. Dans Supabase, **Project Settings** (roue crantée en bas du menu de gauche) :
-   - **Data API** : copie la *Project URL* (`https://xxxx.supabase.co`) dans `SUPABASE_URL` ;
-   - **API Keys** : sous le bloc *Publishable key*, descends jusqu'au bloc **Secret keys**. La clé `default` y est masquée (`sb_secret_••••`) : clique sur l'œil pour l'afficher, puis sur l'icône copier, et colle-la dans `SUPABASE_SECRET_KEY`. Si le bloc *Secret keys* est vide, clique sur **+ New secret key**, nomme-la `scripts`, puis copie-la.
-   - Plan B : onglet **Legacy API Keys** en haut de la même page → ligne `service_role` → **Reveal** → copier. Elle marche exactement pareil dans `SUPABASE_SECRET_KEY`.
-3. Enregistre (`Ctrl+S`). Le `.env` est exclu de Git par `.gitignore` : la clé secrète ne partira jamais sur GitHub.
-
-> ⚠️ La clé secrète donne tous les droits sur la base : jamais dans le code, jamais dans Streamlit. L'app Streamlit utilisera plus tard la clé *publishable*, en lecture seule.
-
-### 4. Corriger puis brancher le Google Sheet
-
-1. **Correction obligatoire** dans l'onglet `Ref - surf_level_conditions_ref` : 6 hauteurs de houle sont devenues des dates (1,2 lu comme le 1er février). Sélectionne les colonnes B à K → **Format → Nombre → Nombre**, puis retape : débutant `swell_height_max` 1.2 ; intermédiaire `swell_height_ideal_max` 1.2 et `swell_height_max` 1.8 ; avancé `swell_height_ideal_max` 1.5 et `swell_height_max` 2.5 ; pro `swell_height_ideal_max` 2.5. Pour éviter que ça recommence : **Fichier → Paramètres → Paramètres régionaux : États-Unis**.
-2. **Partager** → Accès général : « Tous les utilisateurs disposant du lien » → **Lecteur**.
-3. Clique sur chacun des 3 onglets `Ref - …` et copie le nombre après `#gid=` dans l'URL vers `.env` : `GID_SPOT_PROPERTIES`, `GID_SPOT_CONDITIONS`, `GID_LEVEL_CONDITIONS`.
-4. Lance :
-   ```powershell
-   python sync_sheets.py --dry-run
-   python sync_sheets.py
-   ```
-   Le premier vérifie sans rien écrire, et il marche même sans clé Supabase : lance-le dès que les gid sont dans `.env`. Il lit directement le Sheet en ligne (pas un téléchargement .xlsx) et te dit s'il reste des cellules en date. Le second charge 14 spots, 14 conditions et 5 niveaux. S'il reste une erreur, le script liste les cellules à corriger et ne charge rien.
-
-Tu préfères ne pas partager le Sheet ? **Fichier → Télécharger → .xlsx**, puis `python sync_sheets.py --xlsx "C:\chemin\vers\le_fichier.xlsx"`.
-
-À relancer après chaque modification du Sheet.
-
-### 5. Récupérer la météo et l'océan (Open-Meteo)
-
-Aucune clé n'est nécessaire.
-
-```powershell
-python collect.py --spot la_torche --dry-run
-python collect.py
-```
-
-- Le premier teste un seul spot sans écrire en base. Il crée `forecast_preview.csv`, que tu peux ouvrir pour vérifier.
-- Le second remplit `marine_forecast` pour les 14 spots, soit 216 heures par spot (1 jour passé + 8 jours de prévision). Chaque ligne affichée donne le nombre d'heures, et combien sont sans marée. 3 à 6 heures sans marée, au début et à la fin, c'est normal.
-- Tu peux relancer sans risque : les lignes existantes sont mises à jour, sans doublons.
-
-Vérification dans Supabase, **SQL Editor** :
-```sql
-select spot_id, count(*), min(forecast_datetime), max(forecast_datetime)
-from marine_forecast group by spot_id;
-```
-
-### 6. Voir la base depuis VS Code (optionnel)
-
-1. Extensions (`Ctrl+Shift+X`) : installe **SQLTools** et **SQLTools PostgreSQL/Cockroach Driver**.
-2. Dans Supabase, bouton **Connect** en haut de la page → onglet **Connection String** → méthode **Session pooler**. Note host, port (5432), database (`postgres`) et user (`postgres.xxxx`).
-3. Dans VS Code, icône SQLTools (cylindre) → **Add New Connection** → **PostgreSQL**. Recopie ces valeurs, ajoute le mot de passe de la base (celui choisi à la création du projet, réinitialisable dans **Project Settings → Database**), puis **SSL : Enabled**. **Test Connection** → **Save**.
-
-Prends bien le *Session pooler* : la connexion « Direct » ne marche pas sur la plupart des box (IPv6). Les mêmes paramètres marchent dans DBeaver.
-
-### 7. Envoyer sur GitHub et automatiser
-
-1. Dans l'explorateur Windows, crée dans `surf-recommendation` un dossier `.github`, puis dedans un dossier `workflows`, et déplaces-y les 2 fichiers de `workflows_a_deplacer`. Supprime ensuite `workflows_a_deplacer`.
-2. Dans VS Code, onglet **Source Control** (`Ctrl+Shift+G`) : vérifie que `.env` n'apparaît **pas** dans la liste. Message « Ajout schéma Supabase et collecte Open-Meteo » → **Commit** → **Sync Changes**.
-3. Sur github.com, dans ton repo, **Settings → Secrets and variables → Actions** :
-   - onglet **Secrets** → **New repository secret** : `SUPABASE_URL` et `SUPABASE_SECRET_KEY` ;
-   - onglet **Variables** : `GID_SPOT_PROPERTIES`, `GID_SPOT_CONDITIONS`, `GID_LEVEL_CONDITIONS`.
-4. Onglet **Actions** → **collect** → **Run workflow** pour tester. Ensuite la collecte tourne seule à 4 h, 11 h et 17 h UTC. **sync-sheets** se lance à la main après une modif du Sheet.
-
----
-
-## Dépannage
-
-| Message | Cause probable |
+| Transformation | Exemple |
 |---|---|
-| `SUPABASE_URL ou SUPABASE_SECRET_KEY manquant` | `.env` absent ou mal nommé (il doit s'appeler exactement `.env`, pas `.env.txt`) |
-| `Fatal error in launcher` avec `pip` | venv déplacé : refaire l'étape 1 |
-| `Invalid API key` | clé publishable collée à la place de la secrète |
-| `Impossible de lire l'onglet … (HTTP 401/404)` | Sheet non partagé par lien, ou mauvais gid |
-| `permission denied for table` (42501) | lancer `sql/002_grants.sql` dans le SQL Editor |
-| `...python.exe n'est pas reconnu` | tu n'es pas dans le dossier `surf-recommendation` : `cd surf-recommendation` |
-| `violates foreign key constraint` dans collect | lancer `sync_sheets.py` avant `collect.py` |
-| `HTTP 429` Open-Meteo | trop d'appels rapprochés : attendre une minute |
+| Identifiants en minuscules, espaces remplacés par `_` | `La Torche` → `la_torche` |
+| Valeurs d'enum en minuscules et sans accents | `Intermédiaire` → `intermediaire`, `Mi-marée` → `mi-maree` |
+| Décimales françaises acceptées | `1,2` → `1.2` |
+| Nombres transformés en dates par Google Sheets rejetés | `01/02` à la place de `1,2` → erreur explicite |
+| Valeurs contrôlées contre les listes du doc | `min_level` ∈ {debutant, intermediaire, avance, expert, pro} |
+| Bornes vérifiées | orientations 0–360, crowd 1–5, houle 0–10 m |
+| Seuils ordonnés par niveau | `swell_height_min ≤ … ≤ swell_height_max` |
+| Cohérence entre onglets | chaque spot des conditions existe dans les propriétés |
 
-## Prochaine étape
+Le chargement est **tout ou rien** : à la moindre erreur, rien n'est écrit et le script liste les cellules à corriger. L'en-tête est détecté automatiquement, même s'il y a des lignes vides au-dessus du tableau ou des unités dans le nom de colonne (`period_min (sec)`).
 
-`spot_hour_scores` est créée mais encore vide. Elle sera remplie par `score.py` (éligibilité, sous-scores et score global du doc), à ajouter dans le workflow après `collect.py`.
+### 2. Prévisions : `collect.py`
+
+Pour chaque spot de `surf_spot_properties` (lus en base, donc un spot ajouté au Sheet est collecté automatiquement) :
+
+| Colonne `marine_forecast` | Champ Open-Meteo | API |
+|---|---|---|
+| `swell_height_m` | `swell_wave_height` | Marine |
+| `swell_period_s` | `swell_wave_period` | Marine |
+| `swell_direction_deg` | `swell_wave_direction` | Marine |
+| `water_temp_c` | `sea_surface_temperature` | Marine |
+| `sea_level_height_m` | `sea_level_height_msl` | Marine |
+| `wind_speed_kmh` | `wind_speed_10m` (forcé en km/h) | Weather |
+| `wind_direction_deg` | `wind_direction_10m` | Weather |
+| `air_temp_c` | `temperature_2m` | Weather |
+| `uv_index` | `uv_index` | Weather |
+| `precipitation_mm` | `precipitation` | Weather |
+
+- **Unités et conventions du doc :** heures en UTC (`timezone=GMT`), vent en km/h, directions en « d'où ça vient », comme les fenêtres du référentiel.
+- **Fenêtre :** `past_days=1` et `forecast_days=8`. Le jour passé et le jour en plus servent à encadrer chaque heure utile par une basse mer et une pleine mer, nécessaires au calcul de la marée.
+- **Sobriété :** une seule requête par API pour tous les spots (Open-Meteo accepte des listes de coordonnées), soit 2 appels par collecte. En cas d'échec : 3 essais avec attente croissante, puis un nouvel essai spot par spot.
+- **Traçabilité :** `data_source` et `retrieved_at` sur chaque ligne. Le futur `forecast_retrieved_at` des scores pointe vers cette collecte.
+- Le script sort en erreur si un spot échoue, ce qui empêchera le scoring de tourner sur des données incomplètes.
+
+### 3. Marée : `tide.py`
+
+Open-Meteo donne la hauteur d'eau, pas le stade de la marée. `tide.py` applique la section « Calcul de tide_stage » du doc v3 :
+
+1. Repérer les basses et pleines mers (minima et maxima locaux de `sea_level_height_m`). Un palier de plusieurs heures à la même hauteur ne compte qu'une fois.
+2. Entre deux extrêmes, calculer la progression de l'heure : `tide_level_pct` vaut 0 à la basse mer et 1 à la pleine mer, en montée comme en descente.
+3. `tide_direction` vaut `montante` entre une basse et une pleine mer, `descendante` sinon. Une pleine mer est le début de la descente, une basse mer le début de la montée.
+4. `tide_stage` : `basse` si pct < 0,3, `pleine` si pct > 0,7, `mi-maree` sinon.
+
+Les quelques heures avant le premier extrême et après le dernier restent vides, car on ne peut pas les situer dans un cycle. Grâce à la marge J-1 et J+8, elles tombent hors de la fenêtre utile (J-1 à J+7).
+
+### 4. Scores : `score.py` (prochaine étape)
+
+`spot_hour_scores` est créée et contrainte, mais encore vide. `score.py` calculera pour chaque spot, heure et niveau :
+
+- **l'éligibilité** : niveau du spot, houle trop forte, vent trop fort, données manquantes ;
+- **les sous-scores** houle (hauteur et direction), période, vent (vitesse et direction) et marée ;
+- **le score global** pondéré du doc.
+
+Il s'appuiera sur les règles du doc v3 qui ne sont pas stockées : la traduction de `ideal_tide_stage` en plage de `tide_level_pct`, les fenêtres par défaut quand un spot n'en a pas (houle = orientation ± 30°, vent offshore = orientation + 180° ± 45°), la gestion des fenêtres qui passent par le nord, et l'affichage en heure de Paris.
+
+Prévu en V2 : `tide_coefficient` (source SHOM), aujourd'hui vide, et `crowd_level`, stocké mais pas utilisé par l'algorithme.
+
+## Qualité des données
+
+Les trois requêtes de contrôle se lancent dans le SQL Editor de Supabase, en lecture seule. Résultats sur les données réelles :
+
+| Requête | Ce qu'elle vérifie | Résultat |
+|---|---|---|
+| `003_checks.sql` | 14 spots tous renseignés et collectés, collecte de moins de 13 h, prévisions jusqu'à J+7, aucune heure manquante, aucune valeur vide sur la houle, le vent, les températures et la hauteur d'eau, valeurs plausibles, 3 stades de marée présents | 20 contrôles sur 20 OK |
+| `004_null_columns.sql` | Taux de remplissage de chaque colonne | 100 % partout, sauf les 3 colonnes de marée (96 %, ce sont les heures de bord de fenêtre) et `tide_coefficient` (0 %, prévu en V2) |
+| `005_tide_check.sql` | Le stade suit la règle du doc. L'eau monte bien quand la marée est montante et baisse quand elle est descendante. Les basses et pleines mers sont bien des creux et des pics. | 0 erreur. Environ 12,2 h entre deux basses mers, ce qui correspond au cycle semi-diurne réel (12 h 25). |
+
+Les tests unitaires (`python -m pytest tests`) vérifient sans réseau la marée sur des courbes simulées, le rejet des dates parasites du Sheet et l'assemblage des lignes.
+
+## Lancer le projet
+
+Prérequis : Python 3.13, un projet Supabase et un Google Sheet partagé en lecture par lien.
+
+```bash
+python -m venv .venv
+source .venv/Scripts/activate      # Windows (Git Bash) ; sous macOS/Linux : source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env               # puis renseigner l'URL et la clé secrète Supabase, et les gid des onglets
+```
+
+1. Dans Supabase, **SQL Editor** : exécuter `sql/001_schema.sql`.
+2. Charger les référentiels : `python sync_sheets.py --dry-run` (vérifie seulement), puis `python sync_sheets.py`.
+3. Collecter : `python collect.py --spot la_torche --dry-run` (un spot, aperçu dans `forecast_preview.csv`), puis `python collect.py`.
+4. Contrôler : exécuter `sql/003_checks.sql`, `004_null_columns.sql` et `005_tide_check.sql`.
+
+**Automatisation.** Dans GitHub, **Settings → Secrets and variables → Actions** :
+- *Secrets* (chiffrés, invisibles même dans les logs) : `SUPABASE_URL`, `SUPABASE_SECRET_KEY` ;
+- *Variables* : `GID_SPOT_PROPERTIES`, `GID_SPOT_CONDITIONS`, `GID_LEVEL_CONDITIONS`.
+
+Le workflow `collect` synchronise alors le Sheet puis collecte les prévisions à 4 h, 11 h et 17 h UTC. Il peut aussi se lancer à la main depuis l'onglet **Actions**.
