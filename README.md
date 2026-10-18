@@ -2,7 +2,7 @@
 
 Recommandation de spots de surf en Bretagne, heure par heure, selon le niveau du surfeur.
 
-Ce dépôt contient le **pipeline de données** du projet : il charge le référentiel des spots, collecte les prévisions océan et météo trois fois par jour, calcule la marée et prépare la table des scores. Il applique les specs du document *FindYourWave : Algorithme de recommandation pour le surf* (v3).
+Ce dépôt contient le **pipeline de données** et le **moteur de scoring** du projet : il charge le référentiel des spots, collecte les prévisions océan et météo trois fois par jour, calcule la marée, puis note chaque spot, heure par heure, pour chacun des 5 niveaux. Il applique les specs du document *FindYourWave : Algorithme de recommandation pour le surf* (v3).
 
 ```
 Google Sheet (référentiels, saisis à la main)
@@ -14,13 +14,13 @@ Google Sheet (référentiels, saisis à la main)
 │  surf_spot_conditions_reference              │
 │  surf_level_conditions_reference             │
 │  marine_forecast      ◄── collect.py ◄── Open-Meteo Marine + Weather
-│  spot_hour_scores     ◄── score.py (à venir) │
+│  spot_hour_scores     ◄── score.py           │
 └──────────────────────────────────────────────┘
         ▲
-GitHub Actions : sync + collecte à 4 h, 11 h et 17 h UTC
+GitHub Actions : sync, collecte puis scoring à 4 h, 11 h et 17 h UTC
 ```
 
-**État :** 14 spots, 5 niveaux, 216 heures de prévisions par spot (J-1 à J+8), rafraîchies 3 fois par jour. Les données sont vérifiées par les requêtes SQL du dossier `sql/` (voir [Qualité des données](#qualité-des-données)). Le calcul des scores (`score.py`) est la prochaine étape.
+**État :** 14 spots, 5 niveaux, 216 heures de prévisions par spot (J-1 à J+8) et 11 760 scores (14 spots × 168 h × 5 niveaux), rafraîchis 3 fois par jour. Les données sont vérifiées par les requêtes SQL du dossier `sql/` (voir [Qualité des données](#qualité-des-données)). Prochaine étape : l'interface Streamlit.
 
 ## Stack
 
@@ -41,11 +41,13 @@ GitHub Actions : sync + collecte à 4 h, 11 h et 17 h UTC
 | `sql/003_checks.sql` | 20 contrôles d'alimentation : référentiels, fraîcheur, trous, valeurs vides, plausibilité |
 | `sql/004_null_columns.sql` | Taux de remplissage de chaque colonne de chaque table |
 | `sql/005_tide_check.sql` | Vérification du calcul de la marée contre la hauteur d'eau brute |
+| `sql/006_scores_check.sql` | Contrôle des scores : volume, fraîcheur, éligibilité par niveau, répartition |
 | `sync_sheets.py` | Google Sheet → 3 tables de référence |
 | `collect.py` | Open-Meteo → `marine_forecast` |
 | `tide.py` | Calcul de `tide_level_pct`, `tide_direction`, `tide_stage` |
+| `score.py` | Éligibilité, sous-scores et score global → `spot_hour_scores` |
 | `config.py`, `db.py` | Paramètres (lus dans `.env` ou les secrets GitHub) et connexion Supabase |
-| `tests/test_pipeline.py` | Tests unitaires hors ligne (marée, rejet des dates du Sheet, assemblage des lignes) |
+| `tests/` | Tests unitaires hors ligne : marée, rejet des dates du Sheet, assemblage des lignes, chaque règle de scoring |
 | `.github/workflows/` | `collect.yml` (3×/jour) et `sync_sheets.yml` (manuel) |
 
 ## Modèle de données
@@ -58,7 +60,7 @@ Les tables reprennent la section « Modèle de données » du doc. Les choix d'i
 | `surf_spot_conditions_reference` | 1 ligne par spot | Sheet « Ref - surf_spot_conditions_ref » | Clé étrangère vers le spot. `ideal_tide_stage` vaut `toutes` par défaut. Les fenêtres circulaires (ex. 330 → 30) sont acceptées. |
 | `surf_level_conditions_reference` | 1 ligne par niveau | Sheet « Ref - surf_level_conditions_ref » | Les CHECK imposent `min ≤ idéal min ≤ idéal max ≤ max` : un seuil mal saisi est refusé par la base elle-même. |
 | `marine_forecast` | 1 ligne par spot et par heure | Open-Meteo + `tide.py` | Unicité `(spot_id, forecast_datetime)` : chaque collecte met à jour les heures existantes, sans doublon. |
-| `spot_hour_scores` | 1 ligne par spot, heure et niveau | `score.py` (à venir) | Les CHECK garantissent qu'un créneau non éligible a une raison et pas de score global. |
+| `spot_hour_scores` | 1 ligne par spot, heure et niveau | `score.py` | Les CHECK garantissent qu'un créneau non éligible a une raison et pas de score global. |
 
 Les « enum » du doc sont des CHECK sur du texte plutôt que des types ENUM Postgres : ajouter une valeur revient à modifier une ligne.
 
@@ -104,7 +106,7 @@ Pour chaque spot de `surf_spot_properties` (lus en base, donc un spot ajouté au
 - **Fenêtre :** `past_days=1` et `forecast_days=8`. Le jour passé et le jour en plus servent à encadrer chaque heure utile par une basse mer et une pleine mer, nécessaires au calcul de la marée.
 - **Sobriété :** une seule requête par API pour tous les spots (Open-Meteo accepte des listes de coordonnées), soit 2 appels par collecte. En cas d'échec : 3 essais avec attente croissante, puis un nouvel essai spot par spot.
 - **Traçabilité :** `data_source` et `retrieved_at` sur chaque ligne. Le futur `forecast_retrieved_at` des scores pointe vers cette collecte.
-- Le script sort en erreur si un spot échoue, ce qui empêchera le scoring de tourner sur des données incomplètes.
+- Le script sort en erreur si un spot échoue : le scoring n'est alors pas lancé, et l'app garde les derniers scores, avec leur date.
 
 ### 3. Marée : `tide.py`
 
@@ -117,15 +119,37 @@ Open-Meteo donne la hauteur d'eau, pas le stade de la marée. `tide.py` applique
 
 Les quelques heures avant le premier extrême et après le dernier restent vides, car on ne peut pas les situer dans un cycle. Grâce à la marge J-1 et J+8, elles tombent hors de la fenêtre utile (J-1 à J+7).
 
-### 4. Scores : `score.py` (prochaine étape)
+### 4. Scores : `score.py`
 
-`spot_hour_scores` est créée et contrainte, mais encore vide. `score.py` calculera pour chaque spot, heure et niveau :
+Pour chaque spot, chaque heure de l'heure en cours à J+7 et chacun des 5 niveaux, `score.py` applique les sections « Éligibilité », « Calcul des sous-scores » et « Calcul du score global » du doc. Les scores sont précalculés pour tous les niveaux : l'app n'aura plus qu'à filtrer par niveau, distance, date et horaires.
 
-- **l'éligibilité** : niveau du spot, houle trop forte, vent trop fort, données manquantes ;
-- **les sous-scores** houle (hauteur et direction), période, vent (vitesse et direction) et marée ;
-- **le score global** pondéré du doc.
+**Éligibilité.** Un créneau est écarté, avec sa raison dans `ineligibility_reason`, si :
 
-Il s'appuiera sur les règles du doc v3 qui ne sont pas stockées : la traduction de `ideal_tide_stage` en plage de `tide_level_pct`, les fenêtres par défaut quand un spot n'en a pas (houle = orientation ± 30°, vent offshore = orientation + 180° ± 45°), la gestion des fenêtres qui passent par le nord, et l'affichage en heure de Paris.
+| Raison | Règle |
+|---|---|
+| `niveau_spot` | le niveau est inférieur au `min_level` du spot |
+| `donnees_manquantes` | il manque la houle (hauteur, période, direction), le vent (vitesse, direction) ou la marée |
+| `houle_trop_forte` | hauteur effective > `swell_height_max` du niveau |
+| `vent_trop_fort` | vent > `wind_speed_max` du niveau |
+
+**Sous-scores (0 à 100).** Toutes les rampes sont linéaires entre les seuils du référentiel par niveau.
+
+| Sous-score | Calcul |
+|---|---|
+| Direction de houle | Écart entre la houle et la fenêtre idéale du spot (0 si elle est dedans). Facteur 1 dans la fenêtre, de 1 à 0,2 jusqu'à 60° d'écart, puis jusqu'à 0 à 90°. `swell_direction_score` = facteur × 100. |
+| Houle | `hauteur effective = swell_height_m × facteur`, notée selon le niveau : 0 → 30 sous le min, 30 → 70 jusqu'à l'idéal, 100 dans l'idéal, 100 → 40 jusqu'au max. Une grosse houle qui arrive de dos ne rend donc pas un spot dangereux. |
+| Période | 30 hors des bornes, 30 → 90 jusqu'à l'idéal, 100 dans l'idéal, 100 → 50 jusqu'au max |
+| Vitesse du vent | 100 jusqu'à `wind_speed_ideal_max`, puis 100 → 30 jusqu'à `wind_speed_max` |
+| Direction du vent | Écart à la fenêtre offshore du spot : 100 dedans, 100 → 70 jusqu'à 45° (side-offshore), 70 → 30 jusqu'à 90° (side), 30 → 0 au-delà (onshore). 100 si le vent fait moins de 5 km/h. |
+| Vent | moyenne 50/50 de la vitesse et de la direction |
+| Marée | `ideal_tide_stage` est traduit en plage de `tide_level_pct` (basse 0–0,35 ; mi-marée 0,3–0,7 ; pleine 0,65–1 ; montante ou descendante 0–1 avec un sens imposé). 100 dans la plage et dans le bon sens, 70 dans la plage mais à contre-sens, sinon 100 − 200 × l'écart à la plage. |
+
+**Score global** = 0,40 × houle + 0,20 × période + 0,25 × vent + 0,15 × marée. Ce sont les poids v0 du doc. Ils sont réunis en tête de `score.py` avec les autres paramètres, et chaque ligne garde la version utilisée (`scoring_version`).
+
+**Choix d'implémentation**
+- Les fenêtres de houle et de vent du Sheet passent par le nord si besoin (ex. 330 → 30). Si un spot n'en a pas, le code les déduit de `spot_orientation_deg` : houle = orientation ± 30°, vent offshore = orientation + 180° ± 45°. Avec la fenêtre par défaut, le calcul de direction de houle donne exactement la table du doc (1 jusqu'à 30° de l'orientation, 0 au-delà de 120°).
+- La table ne garde que la fenêtre en cours : chaque calcul met à jour les heures à venir et supprime les heures passées. `forecast_retrieved_at` indique la collecte utilisée.
+- Les conditions (houle, vent, marée…) ne sont pas recopiées : l'app les lira par jointure sur `marine_forecast`.
 
 Prévu en V2 : `tide_coefficient` (source SHOM), aujourd'hui vide, et `crowd_level`, stocké mais pas utilisé par l'algorithme.
 
@@ -139,7 +163,9 @@ Les trois requêtes de contrôle se lancent dans le SQL Editor de Supabase, en l
 | `004_null_columns.sql` | Taux de remplissage de chaque colonne | 100 % partout, sauf les 3 colonnes de marée (96 %, ce sont les heures de bord de fenêtre) et `tide_coefficient` (0 %, prévu en V2) |
 | `005_tide_check.sql` | Le stade suit la règle du doc. L'eau monte bien quand la marée est montante et baisse quand elle est descendante. Les basses et pleines mers sont bien des creux et des pics. | 0 erreur. Environ 12,2 h entre deux basses mers, ce qui correspond au cycle semi-diurne réel (12 h 25). |
 
-Les tests unitaires (`python -m pytest tests`) vérifient sans réseau la marée sur des courbes simulées, le rejet des dates parasites du Sheet et l'assemblage des lignes.
+`006_scores_check.sql` contrôle ensuite les scores : une ligne par spot, heure et niveau, calcul de moins de 13 h fait sur la dernière collecte, aucun spot éligible sous son niveau minimum, et répartition des scores.
+
+Les tests unitaires (`python -m pytest tests`, 10 tests) vérifient sans réseau la marée sur des courbes simulées, le rejet des dates parasites du Sheet, l'assemblage des lignes et chaque règle de scoring du doc.
 
 ## Lancer le projet
 
@@ -155,10 +181,11 @@ cp .env.example .env               # puis renseigner l'URL et la clé secrète S
 1. Dans Supabase, **SQL Editor** : exécuter `sql/001_schema.sql`.
 2. Charger les référentiels : `python sync_sheets.py --dry-run` (vérifie seulement), puis `python sync_sheets.py`.
 3. Collecter : `python collect.py --spot la_torche --dry-run` (un spot, aperçu dans `forecast_preview.csv`), puis `python collect.py`.
-4. Contrôler : exécuter `sql/003_checks.sql`, `004_null_columns.sql` et `005_tide_check.sql`.
+4. Scorer : `python score.py --dry-run` (aperçu dans `scores_preview.csv`), puis `python score.py`.
+5. Contrôler : exécuter `sql/003_checks.sql` à `006_scores_check.sql`.
 
 **Automatisation.** Dans GitHub, **Settings → Secrets and variables → Actions** :
 - *Secrets* (chiffrés, invisibles même dans les logs) : `SUPABASE_URL`, `SUPABASE_SECRET_KEY` ;
 - *Variables* : `GID_SPOT_PROPERTIES`, `GID_SPOT_CONDITIONS`, `GID_LEVEL_CONDITIONS`.
 
-Le workflow `collect` synchronise alors le Sheet puis collecte les prévisions à 4 h, 11 h et 17 h UTC. Il peut aussi se lancer à la main depuis l'onglet **Actions**.
+Le workflow `collect` synchronise alors le Sheet, collecte les prévisions puis calcule les scores à 4 h, 11 h et 17 h UTC. Il peut aussi se lancer à la main depuis l'onglet **Actions**.
