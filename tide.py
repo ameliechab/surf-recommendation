@@ -62,5 +62,12 @@ def compute_tide(levels):
             pct[i] = round(progression if rising else 1 - progression, 3)
             direction[i] = "montante" if rising else "descendante"
 
+    # Le dernier extrême garde sinon le sens du segment qui y mène : comme pour les
+    # extrêmes intermédiaires, une pleine mer est le début de la descente (et inversement).
+    if len(extremes) >= 2:
+        last, kind = extremes[-1]
+        if pct[last] is not None:
+            direction[last] = "descendante" if kind == "pleine" else "montante"
+
     stage = [stage_from_pct(p) for p in pct]
     return pct, direction, stage
