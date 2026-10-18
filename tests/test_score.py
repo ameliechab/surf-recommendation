@@ -72,3 +72,9 @@ def test_sub_scores_follow_the_doc():
     assert score.tide_score(0.5, "descendante", "montante") == 70
     assert score.tide_score(0.9, "montante", "mi-maree") == pytest.approx(60)
     assert score.tide_score(0.2, "montante", None) == 100
+
+
+def test_night_is_not_eligible():
+    row = score.score_hour(GOOD_HOUR | {"is_daylight": False}, LA_TORCHE, "debutant", DEBUTANT)
+    assert row["ineligibility_reason"] == "nuit" and row["global_score"] is None
+    assert score.score_hour(GOOD_HOUR | {"is_daylight": True}, LA_TORCHE, "debutant", DEBUTANT)["is_eligible"]

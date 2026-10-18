@@ -7,7 +7,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from collect import build_rows  # noqa: E402
+from collect import build_rows, is_daylight  # noqa: E402
 from sync_sheets import clean_table  # noqa: E402
 from tide import compute_tide  # noqa: E402
 
@@ -58,3 +58,11 @@ def test_build_rows():
     assert len(rows) == 216
     assert rows[0]["forecast_datetime"] == "2026-10-17T00:00:00+00:00"
     assert rows[0]["tide_stage"] is None and rows[50]["tide_stage"] is not None
+
+
+def test_daylight_from_sunrise_and_sunset():
+    times = pd.Series(pd.date_range("2026-10-18 05:00", periods=15, freq="h", tz="UTC"))
+    daily = {"time": ["2026-10-18"], "sunrise": ["2026-10-18T06:20"], "sunset": ["2026-10-18T17:15"]}
+    day = is_daylight(times, daily)
+    assert day[1] is False and day[2] is True     # 06:00 avant le lever, 07:00 après
+    assert day[12] is True and day[13] is False   # 17:00 avant le coucher, 18:00 après

@@ -42,6 +42,7 @@ GitHub Actions : sync, collecte puis scoring à 4 h, 11 h et 17 h UTC
 | `sql/004_null_columns.sql` | Taux de remplissage de chaque colonne de chaque table |
 | `sql/005_tide_check.sql` | Vérification du calcul de la marée contre la hauteur d'eau brute |
 | `sql/006_scores_check.sql` | Contrôle des scores : volume, fraîcheur, éligibilité par niveau, répartition |
+| `sql/007_daylight.sql` | Migration : colonne `is_daylight` et raison `nuit` (déjà incluses dans 001 pour une nouvelle base) |
 | `sync_sheets.py` | Google Sheet → 3 tables de référence |
 | `collect.py` | Open-Meteo → `marine_forecast` |
 | `tide.py` | Calcul de `tide_level_pct`, `tide_direction`, `tide_stage` |
@@ -101,6 +102,7 @@ Pour chaque spot de `surf_spot_properties` (lus en base, donc un spot ajouté au
 | `air_temp_c` | `temperature_2m` | Weather |
 | `uv_index` | `uv_index` | Weather |
 | `precipitation_mm` | `precipitation` | Weather |
+| `is_daylight` | `sunrise`, `sunset` (données journalières) : l'heure commence entre le lever et le coucher du soleil | Weather |
 
 - **Unités et conventions du doc :** heures en UTC (`timezone=GMT`), vent en km/h, directions en « d'où ça vient », comme les fenêtres du référentiel.
 - **Fenêtre :** `past_days=1` et `forecast_days=8`. Le jour passé et le jour en plus servent à encadrer chaque heure utile par une basse mer et une pleine mer, nécessaires au calcul de la marée.
@@ -128,6 +130,7 @@ Pour chaque spot, chaque heure de l'heure en cours à J+7 et chacun des 5 niveau
 | Raison | Règle |
 |---|---|
 | `niveau_spot` | le niveau est inférieur au `min_level` du spot |
+| `nuit` | l'heure commence avant le lever ou après le coucher du soleil (ajout par rapport au doc : les meilleurs créneaux tombaient souvent le soir, quand le vent tombe, mais de nuit) |
 | `donnees_manquantes` | il manque la houle (hauteur, période, direction), le vent (vitesse, direction) ou la marée |
 | `houle_trop_forte` | hauteur effective > `swell_height_max` du niveau |
 | `vent_trop_fort` | vent > `wind_speed_max` du niveau |
@@ -165,7 +168,7 @@ Les trois requêtes de contrôle se lancent dans le SQL Editor de Supabase, en l
 
 `006_scores_check.sql` contrôle ensuite les scores : une ligne par spot, heure et niveau, calcul de moins de 13 h fait sur la dernière collecte, aucun spot éligible sous son niveau minimum, et répartition des scores.
 
-Les tests unitaires (`python -m pytest tests`, 10 tests) vérifient sans réseau la marée sur des courbes simulées, le rejet des dates parasites du Sheet, l'assemblage des lignes et chaque règle de scoring du doc.
+Les tests unitaires (`python -m pytest tests`, 12 tests) vérifient sans réseau la marée sur des courbes simulées, le rejet des dates parasites du Sheet, l'assemblage des lignes et chaque règle de scoring du doc.
 
 ## Lancer le projet
 

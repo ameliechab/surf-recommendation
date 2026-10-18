@@ -35,6 +35,7 @@ WEATHER_FIELDS = {
     "uv_index": "uv_index",
     "precipitation": "precipitation_mm",
 }
+# + lever et coucher du soleil (daily) -> is_daylight
 
 
 PAUSE_BETWEEN_CALLS_S = 2  # pour ne pas solliciter Open-Meteo trop vite
@@ -57,7 +58,20 @@ def _get_json(url: str, params: dict):
 def _to_df(payload: dict, fields: dict) -> pd.DataFrame:
     df = pd.DataFrame(payload["hourly"]).rename(columns=fields)
     df["forecast_datetime"] = pd.to_datetime(df.pop("time"), utc=True)
+    if "daily" in payload:
+        df["is_daylight"] = is_daylight(df["forecast_datetime"], payload["daily"])
     return df
+
+
+def is_daylight(times: pd.Series, daily: dict) -> list:
+    """True si l'heure commence entre le lever et le coucher du soleil du jour."""
+    sun = {pd.Timestamp(d).date(): (pd.Timestamp(r, tz="UTC"), pd.Timestamp(s, tz="UTC"))
+           for d, r, s in zip(daily["time"], daily["sunrise"], daily["sunset"])}
+    result = []
+    for t in times:
+        sunrise, sunset = sun.get(t.date(), (None, None))
+        result.append(None if sunrise is None else bool(sunrise <= t < sunset))
+    return result
 
 
 def fetch_hourly(url: str, spots: list[dict], fields: dict, extra: dict | None = None) -> dict:
@@ -112,7 +126,8 @@ def main():
         try:
             marine = fetch_hourly(config.MARINE_API_URL, batch, MARINE_FIELDS)
             time.sleep(PAUSE_BETWEEN_CALLS_S)
-            weather = fetch_hourly(config.WEATHER_API_URL, batch, WEATHER_FIELDS, {"wind_speed_unit": "kmh"})
+            weather = fetch_hourly(config.WEATHER_API_URL, batch, WEATHER_FIELDS,
+                                   {"wind_speed_unit": "kmh", "daily": "sunrise,sunset"})
         except Exception as exc:
             print(f"{', '.join(s['spot_id'] for s in batch)} : ERREUR {exc}", file=sys.stderr)
             return batch

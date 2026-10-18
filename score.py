@@ -144,6 +144,8 @@ def score_hour(fc: dict, spot: dict, level: str, ref: dict) -> dict:
 
     if LEVELS.index(level) < LEVELS.index(spot["min_level"]):
         return row | {"ineligibility_reason": "niveau_spot"}
+    if fc.get("is_daylight") is False:
+        return row | {"ineligibility_reason": "nuit"}
     if any(fc.get(c) is None for c in REQUIRED):
         return row | {"ineligibility_reason": "donnees_manquantes"}
 
@@ -224,7 +226,7 @@ def load_inputs(client, start: dt.datetime, end: dt.datetime):
 
     forecasts = fetch_all(
         client.table("marine_forecast")
-        .select("spot_id, forecast_datetime, retrieved_at, " + ", ".join(REQUIRED))
+        .select("spot_id, forecast_datetime, retrieved_at, is_daylight, " + ", ".join(REQUIRED))
         .gte("forecast_datetime", start.isoformat())
         .lt("forecast_datetime", end.isoformat())
         .order("spot_id").order("forecast_datetime")
