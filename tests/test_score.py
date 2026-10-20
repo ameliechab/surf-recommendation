@@ -53,19 +53,41 @@ def test_ineligibility_reasons():
     assert row["global_score"] is None
 
 
-def test_swell_from_behind_is_not_too_big():
-    # 1,5 m de houle d'est sur une plage ouverte à l'ouest : hauteur effective 0
+def test_swell_from_behind_is_flat():
+    # 1,5 m de houle d'est sur une plage ouverte à l'ouest : hauteur effective 0, pas trop forte mais plate
     row = score.score_hour(GOOD_HOUR | {"swell_height_m": 1.5, "swell_direction_deg": 90},
                            LA_TORCHE, "debutant", DEBUTANT)
-    assert row["is_eligible"] and row["swell_direction_score"] == 0 and row["swell_score"] == 0
+    assert row["ineligibility_reason"] == "houle_trop_faible" and row["global_score"] is None
+
+
+def test_flat_sea_is_not_eligible():
+    # Sainte-Barbe lundi 19/10 9 h : 0,18 m, période, vent et marée bons -> 60 à 62 en v0
+    flat = GOOD_HOUR | {"swell_height_m": 0.18, "swell_period_s": 10.2}
+    for level in score.LEVELS:
+        row = score.score_hour(flat, LA_TORCHE, level, DEBUTANT)
+        assert row["ineligibility_reason"] == "houle_trop_faible" and row["global_score"] is None
+    # Au minimum du niveau, le créneau reste éligible
+    assert score.score_hour(GOOD_HOUR | {"swell_height_m": 0.4}, LA_TORCHE, "debutant", DEBUTANT)["is_eligible"]
+
+
+def test_onshore_wind_lowers_global_score():
+    assert score.onshore_factor(100, 40) == 1  # offshore : pas de pénalité
+    assert score.onshore_factor(0, 8) == 1  # vent de mer faible : pas de pénalité
+    assert score.onshore_factor(0, 30) == pytest.approx(0.5)  # plein onshore et fort : -50 %
+    assert score.onshore_factor(30, 17.5) == pytest.approx(1 - 0.5 * 0.7 * 0.5)
+    # Même créneau, vent de 18 km/h offshore (90) puis onshore (59)
+    offshore = score.score_hour(GOOD_HOUR | {"wind_speed_kmh": 18}, LA_TORCHE, "debutant", DEBUTANT)
+    onshore = score.score_hour(GOOD_HOUR | {"wind_speed_kmh": 18, "wind_direction_deg": 250},
+                               LA_TORCHE, "debutant", DEBUTANT)
+    assert offshore["global_score"] == 90 and onshore["global_score"] == pytest.approx(59.3)
 
 
 def test_sub_scores_follow_the_doc():
     assert score.height_score(1.2, DEBUTANT) == 40
     assert score.height_score(0.2, DEBUTANT) == 15
-    assert score.period_score(5, DEBUTANT) == 30 and score.period_score(14, DEBUTANT) == 30
+    assert score.period_score(5, DEBUTANT) == 0 and score.period_score(14, DEBUTANT) == 0
     assert score.period_score(12, DEBUTANT) == 75
-    assert score.wind_speed_score(15, DEBUTANT) == 65
+    assert score.wind_speed_score(15, DEBUTANT) == 50 and score.wind_speed_score(20, DEBUTANT) == 0
     assert score.wind_direction_score(0, 30) == 100 and score.wind_direction_score(45, 30) == 70
     assert score.wind_direction_score(90, 30) == 30 and score.wind_direction_score(180, 30) == 0
     assert score.wind_direction_score(180, 4) == 100  # vent quasi nul

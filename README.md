@@ -2,7 +2,7 @@
 
 Recommandation de spots de surf en Bretagne, heure par heure, selon le niveau du surfeur.
 
-Ce dépôt contient le **pipeline de données** et le **moteur de scoring** du projet : il charge le référentiel des spots, collecte les prévisions océan et météo trois fois par jour, calcule la marée, puis note chaque spot, heure par heure, pour chacun des 5 niveaux. Il applique les specs du document *FindYourWave : Algorithme de recommandation pour le surf* (v3).
+Ce dépôt contient le **pipeline de données** et le **moteur de scoring** du projet : il charge le référentiel des spots, collecte les prévisions océan et météo trois fois par jour, calcule la marée, puis note chaque spot, heure par heure, pour chacun des 5 niveaux. Il applique les specs du document *FindYourWave : Algorithme de recommandation pour le surf* (v5).
 
 ```
 Google Sheet (référentiels, saisis à la main)
@@ -43,6 +43,7 @@ GitHub Actions : sync, collecte puis scoring à 4 h, 11 h et 17 h UTC
 | `sql/005_tide_check.sql` | Vérification du calcul de la marée contre la hauteur d'eau brute |
 | `sql/006_scores_check.sql` | Contrôle des scores : volume, fraîcheur, éligibilité par niveau, répartition |
 | `sql/007_daylight.sql` | Migration : colonne `is_daylight` et raison `nuit` (déjà incluses dans 001 pour une nouvelle base) |
+| `sql/008_swell_too_low.sql` | Migration : raison `houle_trop_faible` du scoring v1 (déjà incluse dans 001 pour une nouvelle base) |
 | `sync_sheets.py` | Google Sheet → 3 tables de référence |
 | `collect.py` | Open-Meteo → `marine_forecast` |
 | `tide.py` | Calcul de `tide_level_pct`, `tide_direction`, `tide_stage` |
@@ -107,7 +108,7 @@ Pour chaque spot de `surf_spot_properties` (lus en base, donc un spot ajouté au
 - **Unités et conventions du doc :** heures en UTC (`timezone=GMT`), vent en km/h, directions en « d'où ça vient », comme les fenêtres du référentiel.
 - **Fenêtre :** `past_days=1` et `forecast_days=8`. Le jour passé et le jour en plus servent à encadrer chaque heure utile par une basse mer et une pleine mer, nécessaires au calcul de la marée.
 - **Sobriété :** une seule requête par API pour tous les spots (Open-Meteo accepte des listes de coordonnées), soit 2 appels par collecte. En cas d'échec : 3 essais avec attente croissante, puis un nouvel essai spot par spot.
-- **Traçabilité :** `data_source` et `retrieved_at` sur chaque ligne. Le futur `forecast_retrieved_at` des scores pointe vers cette collecte.
+- **Traçabilité :** `data_source` et `retrieved_at` sur chaque ligne. Le `forecast_retrieved_at` des scores pointe vers cette collecte.
 - Le script sort en erreur si un spot échoue : le scoring n'est alors pas lancé, et l'app garde les derniers scores, avec leur date.
 
 ### 3. Marée : `tide.py`
@@ -133,6 +134,7 @@ Pour chaque spot, chaque heure de l'heure en cours à J+7 et chacun des 5 niveau
 | `nuit` | l'heure commence avant le lever ou après le coucher du soleil (ajout par rapport au doc : les meilleurs créneaux tombaient souvent le soir, quand le vent tombe, mais de nuit) |
 | `donnees_manquantes` | il manque la houle (hauteur, période, direction), le vent (vitesse, direction) ou la marée |
 | `houle_trop_forte` | hauteur effective > `swell_height_max` du niveau |
+| `houle_trop_faible` | hauteur effective < `swell_height_min` du niveau : mer plate pour ce niveau (ajout v1 : en v0, une houle de 0,18 m obtenait 60/100 grâce à la période, au vent et à la marée) |
 | `vent_trop_fort` | vent > `wind_speed_max` du niveau |
 
 **Sous-scores (0 à 100).** Toutes les rampes sont linéaires entre les seuils du référentiel par niveau.
@@ -140,14 +142,26 @@ Pour chaque spot, chaque heure de l'heure en cours à J+7 et chacun des 5 niveau
 | Sous-score | Calcul |
 |---|---|
 | Direction de houle | Écart entre la houle et la fenêtre idéale du spot (0 si elle est dedans). Facteur 1 dans la fenêtre, de 1 à 0,2 jusqu'à 60° d'écart, puis jusqu'à 0 à 90°. `swell_direction_score` = facteur × 100. |
-| Houle | `hauteur effective = swell_height_m × facteur`, notée selon le niveau : 0 → 30 sous le min, 30 → 70 jusqu'à l'idéal, 100 dans l'idéal, 100 → 40 jusqu'au max. Une grosse houle qui arrive de dos ne rend donc pas un spot dangereux. |
-| Période | 30 hors des bornes, 30 → 90 jusqu'à l'idéal, 100 dans l'idéal, 100 → 50 jusqu'au max |
-| Vitesse du vent | 100 jusqu'à `wind_speed_ideal_max`, puis 100 → 30 jusqu'à `wind_speed_max` |
+| Houle | `hauteur effective = swell_height_m × facteur`, notée selon le niveau : 30 → 70 du min à l'idéal, 100 dans l'idéal, 100 → 40 jusqu'au max. Une grosse houle qui arrive de dos ne rend donc pas un spot dangereux : elle le rend plat (`houle_trop_faible`). |
+| Période | 0 hors des bornes du niveau, 0 → 90 jusqu'à l'idéal, 100 dans l'idéal, 100 → 50 jusqu'au max |
+| Vitesse du vent | 100 jusqu'à `wind_speed_ideal_max`, puis 100 → 0 jusqu'à `wind_speed_max` |
 | Direction du vent | Écart à la fenêtre offshore du spot : 100 dedans, 100 → 70 jusqu'à 45° (side-offshore), 70 → 30 jusqu'à 90° (side), 30 → 0 au-delà (onshore). 100 si le vent fait moins de 5 km/h. |
 | Vent | moyenne 50/50 de la vitesse et de la direction |
 | Marée | `ideal_tide_stage` est traduit en plage de `tide_level_pct` (basse 0–0,35 ; mi-marée 0,3–0,7 ; pleine 0,65–1 ; montante ou descendante 0–1 avec un sens imposé). 100 dans la plage et dans le bon sens, 70 dans la plage mais à contre-sens, sinon 100 − 200 × l'écart à la plage. |
 
-**Score global** = 0,40 × houle + 0,20 × période + 0,25 × vent + 0,15 × marée. Ce sont les poids v0 du doc. Ils sont réunis en tête de `score.py` avec les autres paramètres, et chaque ligne garde la version utilisée (`scoring_version`).
+**Score global** = (0,40 × houle + 0,20 × période + 0,25 × vent + 0,15 × marée) × facteur vent de mer. Les poids sont ceux du doc. Le facteur vaut 1 si le vent est offshore ou faible, et descend jusqu'à 0,5 quand il souffle de la mer à 25 km/h ou plus : `1 − 0,5 × (1 − direction du vent / 100) × force`, la force allant de 0 à 10 km/h à 1 à 25 km/h. Un vent de mer soutenu hache les vagues, ce qu'une moyenne pondérée ne rend pas : en v0, 1,5 m avec 22 km/h plein onshore donnait 75 à un expert, contre 43 en v1. Tous les paramètres sont en tête de `score.py`, et chaque ligne garde la version utilisée (`scoring_version`).
+
+**Calibration v1 (20/10).** Rejouée sur l'export du 18/10 (11 760 scores) avant d'être codée :
+
+| Niveau | Éligibles v0 → v1 | Médiane v0 → v1 | ≥ 50 (seuil d'affichage) v0 → v1 |
+|---|---|---|---|
+| débutant | 88 → 67 | 75 → 71 | 83 % → 96 % |
+| intermédiaire | 315 → 242 | 79 → 74 | 92 % → 88 % |
+| avancé | 593 → 477 | 70 → 57 | 94 % → 58 % |
+| expert | 792 → 676 | 71 → 48 | 98 % → 45 % |
+| pro | 926 → 809 | 71 → 47 | 97 % → 39 % |
+
+Les créneaux retirés sont des mers plates (459 lignes `houle_trop_faible`). Les scores baissent surtout pour les niveaux qui surfent par vent fort, souvent onshore cette semaine-là. Le débutant reste haut : ses créneaux éligibles sont des jours de petite houle et de vent faible. Les meilleurs créneaux ne bougent presque pas (Pors Carn lundi 15 h : 99 → 97 pour un avancé). Les seuils minimum de houle diffèrent selon le niveau (0,4 m pour un débutant, 0,6 m à partir d'avancé) : un créneau éligible pour un débutant peut donc être trop petit pour un avancé.
 
 **Choix d'implémentation**
 - Les fenêtres de houle et de vent du Sheet passent par le nord si besoin (ex. 330 → 30). Si un spot n'en a pas, le code les déduit de `spot_orientation_deg` : houle = orientation ± 30°, vent offshore = orientation + 180° ± 45°. Avec la fenêtre par défaut, le calcul de direction de houle donne exactement la table du doc (1 jusqu'à 30° de l'orientation, 0 au-delà de 120°).
@@ -168,7 +182,7 @@ Les trois requêtes de contrôle se lancent dans le SQL Editor de Supabase, en l
 
 `006_scores_check.sql` contrôle ensuite les scores : une ligne par spot, heure et niveau, calcul de moins de 13 h fait sur la dernière collecte, aucun spot éligible sous son niveau minimum, et répartition des scores.
 
-Les tests unitaires (`python -m pytest tests`, 12 tests) vérifient sans réseau la marée sur des courbes simulées, le rejet des dates parasites du Sheet, l'assemblage des lignes et chaque règle de scoring du doc.
+Les tests unitaires (`python -m pytest tests`, 14 tests) vérifient sans réseau la marée sur des courbes simulées, le rejet des dates parasites du Sheet, l'assemblage des lignes et chaque règle de scoring du doc.
 
 ## Lancer le projet
 

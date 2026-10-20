@@ -124,7 +124,7 @@ create table if not exists public.spot_hour_scores (
                           check (surf_level in ('debutant','intermediaire','avance','expert','pro')),
     is_eligible           boolean not null,
     ineligibility_reason  text
-                          check (ineligibility_reason in ('niveau_spot','nuit','houle_trop_forte','vent_trop_fort','donnees_manquantes')),
+                          check (ineligibility_reason in ('niveau_spot','nuit','houle_trop_forte','houle_trop_faible','vent_trop_fort','donnees_manquantes')),
     swell_height_score    real check (swell_height_score between 0 and 100),
     swell_direction_score real check (swell_direction_score between 0 and 100),
     swell_score           real check (swell_score between 0 and 100),

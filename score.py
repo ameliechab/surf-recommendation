@@ -16,12 +16,17 @@ import pandas as pd
 
 import db
 
-SCORING_VERSION = "v0"
+SCORING_VERSION = "v1"
 HORIZON_HOURS = 168  # 7 jours de scores à partir de l'heure en cours
 
-# Poids v0 du doc, à ajuster lors de la calibration
+# Poids du doc (inchangés en v1)
 WEIGHTS = {"swell": 0.40, "period": 0.20, "wind": 0.25, "tide": 0.15}
 WIND_WEIGHTS = {"speed": 0.5, "direction": 0.5}
+
+# Calibration v1 (20/10)
+SCORE_FLOOR = 0  # période hors plage du niveau, vent au max du niveau (30 en v0)
+ONSHORE_MAX_PENALTY = 0.5  # le score global perd jusqu'à 50 % avec un vent de mer soutenu
+ONSHORE_WIND_KMH = (10, 25)  # la pénalité monte de 0 à 100 % entre ces deux vitesses
 
 # Fenêtres par défaut quand le Sheet n'en donne pas (autour de spot_orientation_deg)
 DEFAULT_SWELL_HALF_WIDTH = 30
@@ -101,9 +106,9 @@ def height_score(h, ref):
 
 def period_score(p, ref):
     if p < ref["period_min"] or p > ref["period_max"]:
-        return 30.0
+        return float(SCORE_FLOOR)
     if p < ref["period_ideal_min"]:
-        return interpolate(p, ref["period_min"], ref["period_ideal_min"], 30, 90)
+        return interpolate(p, ref["period_min"], ref["period_ideal_min"], SCORE_FLOOR, 90)
     if p <= ref["period_ideal_max"]:
         return 100.0
     return interpolate(p, ref["period_ideal_max"], ref["period_max"], 100, 50)
@@ -112,7 +117,7 @@ def period_score(p, ref):
 def wind_speed_score(v, ref):
     if v <= ref["wind_speed_ideal_max"]:
         return 100.0
-    return interpolate(v, ref["wind_speed_ideal_max"], ref["wind_speed_max"], 100, 30)
+    return interpolate(v, ref["wind_speed_ideal_max"], ref["wind_speed_max"], 100, SCORE_FLOOR)
 
 
 def wind_direction_score(gap, speed):
@@ -123,6 +128,14 @@ def wind_direction_score(gap, speed):
     if gap <= 90:
         return interpolate(gap, 45, 90, 70, 30)
     return interpolate(gap, 90, 180, 30, 0)
+
+
+def onshore_factor(direction_score, speed):
+    """Facteur appliqué au score global : un vent de mer (ou de travers) soutenu
+    hache les vagues, quels que soient la houle et la marée. 1 si le vent est
+    offshore ou faible, jusqu'à 1 - ONSHORE_MAX_PENALTY si plein onshore et fort."""
+    strength = interpolate(speed, *ONSHORE_WIND_KMH, 0, 1)
+    return 1 - ONSHORE_MAX_PENALTY * (1 - direction_score / 100) * strength
 
 
 def tide_score(pct, direction, ideal_stage):
@@ -156,6 +169,8 @@ def score_hour(fc: dict, spot: dict, level: str, ref: dict) -> dict:
     effective_height = fc["swell_height_m"] * factor
     if effective_height > ref["swell_height_max"]:
         return row | {"ineligibility_reason": "houle_trop_forte"}
+    if effective_height < ref["swell_height_min"]:
+        return row | {"ineligibility_reason": "houle_trop_faible"}  # mer plate pour ce niveau
     if fc["wind_speed_kmh"] > ref["wind_speed_max"]:
         return row | {"ineligibility_reason": "vent_trop_fort"}
 
@@ -174,6 +189,7 @@ def score_hour(fc: dict, spot: dict, level: str, ref: dict) -> dict:
 
     total = (WEIGHTS["swell"] * swell + WEIGHTS["period"] * period
              + WEIGHTS["wind"] * wind + WEIGHTS["tide"] * tide)
+    total *= onshore_factor(direction, fc["wind_speed_kmh"])
 
     scores = {"swell_height_score": swell, "swell_direction_score": factor * 100, "swell_score": swell,
               "period_score": period, "wind_speed_score": speed, "wind_direction_score": direction,
