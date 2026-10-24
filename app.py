@@ -121,27 +121,40 @@ today = pd.Timestamp.now(tz=selection.TIMEZONE).date()
 last_day = today + dt.timedelta(days=6)  # les scores couvrent 7 jours
 DEFAULTS = {"level": "intermediaire", "city": "Lorient", "max_km": 100,
             "days": (today, today + dt.timedelta(days=1)), "hours": (8, 20)}
-params = st.session_state.setdefault("params", DEFAULTS.copy())
-# Une recherche gardée en mémoire peut dater d'hier : on la ramène dans la fenêtre des scores
-params["days"] = tuple(min(max(d, today), last_day) for d in params["days"])
+
+
+def clamp_days(days) -> tuple:
+    """Une recherche gardée en mémoire peut dater d'hier : on la ramène dans la fenêtre des scores."""
+    days = tuple(days) if isinstance(days, (tuple, list)) else (days,)
+    return tuple(min(max(d, today), last_day) for d in days) or DEFAULTS["days"]
+
+
+# Les champs du formulaire gardent leur valeur dans st.session_state (clés « f_… »).
+# On ne leur passe PAS de valeur par défaut qui change d'une recherche à l'autre : pour Streamlit,
+# un widget dont les paramètres changent devient un nouveau widget, et la valeur saisie au
+# premier clic était perdue (la recherche précédente revenait).
+for name, value in DEFAULTS.items():
+    st.session_state.setdefault(f"f_{name}", value)
+st.session_state["f_days"] = clamp_days(st.session_state["f_days"])
+params = st.session_state.setdefault("params", DEFAULTS.copy())  # dernière recherche lancée
+params["days"] = clamp_days(params["days"])
 
 st.html(ui.hero_html())
 
 with st.form("search", border=False):
-    level = st.segmented_control("Ton niveau", LEVELS, default=params["level"],
-                                 format_func=selection.LEVEL_LABELS.get, selection_mode="single")
+    st.segmented_control("Ton niveau", LEVELS, format_func=selection.LEVEL_LABELS.get,
+                         selection_mode="single", key="f_level")
     left, right = st.columns(2)
-    cities = sorted(selection.CITIES)
-    city = left.selectbox("Ville de départ", cities, index=cities.index(params["city"]))
-    max_km = right.slider("Distance max", 10, 300, params["max_km"], step=10, format="%d km")
+    left.selectbox("Ville de départ", sorted(selection.CITIES), key="f_city")
+    right.slider("Distance max", 10, 300, step=10, format="%d km", key="f_max_km")
     left, right = st.columns(2)
-    days = left.date_input("Dates", value=params["days"], min_value=today, max_value=last_day,
-                           format="DD/MM/YYYY")
-    hours = right.slider("Horaires", 6, 22, params["hours"], format="%d h")
+    left.date_input("Dates", min_value=today, max_value=last_day, format="DD/MM/YYYY", key="f_days")
+    right.slider("Horaires", 6, 22, format="%d h", key="f_hours")
     if st.form_submit_button("Trouver mes vagues", type="primary", width="stretch"):
-        days = tuple(days) if isinstance(days, (tuple, list)) else (days,)
-        params = {"level": level or params["level"], "city": city, "max_km": max_km,
-                  "days": (days[0], days[-1]) if days else params["days"], "hours": hours}
+        days = clamp_days(st.session_state["f_days"])
+        params = {"level": st.session_state["f_level"] or params["level"],
+                  "city": st.session_state["f_city"], "max_km": st.session_state["f_max_km"],
+                  "days": (days[0], days[-1]), "hours": st.session_state["f_hours"]}
         st.session_state["params"] = params
 
 # ---------------------------------------------------------------------------
@@ -192,20 +205,16 @@ def show_map(recs: list[dict]) -> None:
                   get_line_color=ui.hex_to_rgb(ui.OCEAN), line_width_min_pixels=1.5),
         pdk.Layer("ScatterplotLayer", data=[{"lat": lat, "lon": lon}], get_position="[lon, lat]",
                   get_fill_color=ui.hex_to_rgb(ui.INK), get_radius=1, radius_min_pixels=5),
-        pdk.Layer("TextLayer", data=[{"lat": lat, "lon": lon, "name": params["city"]}],
-                  get_position="[lon, lat]", get_text="name", get_size=13, get_color=ui.hex_to_rgb(ui.INK),
-                  get_text_anchor=pdk.types.String("start"), get_pixel_offset=[10, 0], font_family="Montserrat",
-                  font_weight=600),
+        # Pas de numéros dessinés sur la carte (TextLayer) : leur rendu WebGL n'est pas fiable
+        # d'un navigateur à l'autre. Le rang s'affiche au survol, comme dans la liste.
         pdk.Layer("ScatterplotLayer", data=points, get_position="[lon, lat]", get_fill_color="fill",
                   get_radius=1, radius_min_pixels=12, stroked=True, get_line_color=[255, 255, 255],
                   line_width_min_pixels=2, pickable=True),
-        pdk.Layer("TextLayer", data=points, get_position="[lon, lat]", get_text="rank", get_size=12,
-                  get_color="text_color", font_family="Montserrat", font_weight=800),
     ]
     deck = pdk.Deck(
         layers=layers, map_style=None,  # fond de carte Carto par défaut de Streamlit, sans clé
         initial_view_state=pdk.ViewState(latitude=lat, longitude=lon, zoom=ui.map_zoom(params["max_km"], lat)),
-        tooltip={"html": "<b>{spot_name}</b><br/>{slot}, {score}/100",
+        tooltip={"html": "<b>{rank}. {spot_name}</b><br/>{slot}, {score}/100",
                  "style": {"fontFamily": "Montserrat", "fontSize": "13px"}},
     )
     st.pydeck_chart(deck, height=380)

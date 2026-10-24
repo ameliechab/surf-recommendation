@@ -32,8 +32,8 @@ def test_strip_marks_the_recommended_slot():
 
 
 def test_map_zoom_fits_the_radius():
-    assert ui.map_zoom(10) == 10.0 and ui.map_zoom(300) == 6.43
-    assert 7 < ui.map_zoom(100) < 8.5
+    assert ui.map_zoom(10) == 10.0 and ui.map_zoom(300) == 5.5
+    assert 6.5 < ui.map_zoom(100) < 7.5  # le cercle de 100 km tient dans ~640 px
 
 
 def test_detail_shows_remarks_and_warnings():

@@ -215,5 +215,6 @@ def map_points(recs: list[dict]) -> list[dict]:
 def map_zoom(max_km: float, lat: float = 48.0, width_px: int = 640) -> float:
     """Zoom pour que le cercle de recherche tienne dans la largeur de la carte."""
     meters_per_px = 2.6 * max_km * 1000 / width_px
-    zoom = math.log2(156543 * math.cos(math.radians(lat)) / meters_per_px)
+    # deck.gl suit la convention des tuiles de 512 px : 78 271,5 m/px à l'équateur au zoom 0
+    zoom = math.log2(78271.5 * math.cos(math.radians(lat)) / meters_per_px)
     return round(min(10.0, max(5.5, zoom)), 2)
