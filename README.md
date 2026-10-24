@@ -2,6 +2,8 @@
 
 **Trouver le meilleur spot de surf en Bretagne, heure par heure, selon ton niveau.**
 
+[![Ouvrir l'application](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://findyourwave.streamlit.app/)
+
 FindYourWave note 14 spots bretons pour chacun des 5 niveaux de surf (de débutant à pro), à partir des prévisions de houle, de vent et de marée. L'application propose, pour chaque jour choisi, les 5 meilleurs créneaux autour de ta ville de départ, et explique en français pourquoi chacun est recommandé et ce qui peut poser problème.
 
 <p align="center">
@@ -14,6 +16,7 @@ FindYourWave note 14 spots bretons pour chacun des 5 niveaux de surf (de débuta
 
 | Quoi | Lien |
 |---|---|
+| **L'application en ligne** | **[findyourwave.streamlit.app](https://findyourwave.streamlit.app/)** |
 | Specs fonctionnelles et techniques (algorithme, données, interface, recette) | [Google Doc « FindYourWave - Algorithme de recommandation pour le surf »](https://docs.google.com/document/d/1T4jo2obXOgmlyBt6aLAR7TgoMA6Z_V0V8MXFOUA-Q4s/edit) |
 | Maquettes de l'interface (planche C v2 retenue, palette, échelle des scores) | [Figma « FindYourWave – Maquettes interface »](https://www.figma.com/design/mRagf7nYUj9qZelxzkUze4) |
 | Référentiels saisis à la main (spots, conditions idéales, seuils par niveau) | [Google Sheet « Matrice de passage »](https://docs.google.com/spreadsheets/d/1i_PB1GW9v_wIHYUn5sd08mzb2EUtB7GXq3hLMeN8o1I/edit) |
