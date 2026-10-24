@@ -24,9 +24,17 @@ FindYourWave note 14 spots bretons pour chacun des 5 niveaux de surf (de débuta
 
 Lors d'un surf trip au Portugal, débutante, j'ai suivi plusieurs fois des spots annoncés « débutants » qui ne l'étaient pas du tout ce jour-là, à cause de la taille des vagues ou du vent. Les applications de surf affichent les conditions d'un spot donné, mais aucune ne répond à la question qu'on se pose vraiment en voyage : **où aller, quel jour et à quelle heure, pour mon niveau ?**
 
-FindYourWave répond à ce besoin, en priorité pour les surfeurs débutants ou intermédiaires qui ne connaissent pas encore les spots d'une région. C'est aussi un projet vitrine pour mon activité de freelance et product builder, et un moyen de monter en compétence en data et en code.
+FindYourWave répond à ce besoin, en priorité pour les surfeurs débutants ou intermédiaires qui ne connaissent pas encore les spots d'une région. C'est aussi un projet personnel pour développer mes compétences de product builder : partir d'un besoin réel et aller jusqu'à un produit en ligne, en passant par la data et le code.
 
-J'ai mené le projet seule de bout en bout : cadrage du besoin, specs, modélisation des données, pipeline, algorithme, maquettes, interface, tests et recette.
+J'ai porté le projet de bout en bout (cadrage du besoin, specs, modélisation des données, pipeline, algorithme, maquettes, interface, tests et recette) en travaillant avec l'IA, principalement Claude (Anthropic), comme binôme.
+
+## Travailler avec l'IA
+
+Ce projet est aussi une démonstration de ma façon de construire un produit avec l'IA :
+
+- **Moi** : le besoin, les règles métier et les décisions. Je fixe les seuils par niveau dans le référentiel, je valide chaque règle de scoring et chaque choix d'interface, je relis les specs, je lance les tests et la recette, et je repère les incohérences dans les résultats (une houle de 2,1 m proposée à un intermédiaire, une houle « idéale » au bas de la fourchette d'un pro, un formulaire qui garde l'ancienne recherche…).
+- **Claude** : propositions d'architecture et de règles, écriture du code et des tests, rédaction des specs dans le Google Doc, maquettes dans Figma, analyses sur les données d'audit et corrections à partir de mes retours.
+- **La méthode** : avancer par petites étapes vérifiables, faire valider chaque décision avant de coder, tout documenter (specs, décisions, calibration) et tout tester (41 tests hors ligne, 20 contrôles SQL).
 
 ## Ce que j'ai fait
 
@@ -144,4 +152,4 @@ Le workflow `collect` synchronise alors le Sheet, collecte les prévisions puis 
 
 ## Auteure
 
-**Amélie Chabrand**, freelance et product builder. [LinkedIn](https://www.linkedin.com/in/am%C3%A9lie-chabrand-145505196/)
+**Amélie Chabrand**, product builder. [LinkedIn](https://www.linkedin.com/in/am%C3%A9lie-chabrand-145505196/)
