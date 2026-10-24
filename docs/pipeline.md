@@ -11,7 +11,7 @@ Les tables reprennent la section « Modèle de données » du doc. Les choix d'i
 | `surf_spot_properties` | 1 ligne par spot | Sheet « Ref - surf_spot_properties » | `spot_id` en clé, en minuscules. Coordonnées et orientation bornées par des CHECK. |
 | `surf_spot_conditions_reference` | 1 ligne par spot | Sheet « Ref - surf_spot_conditions_ref » | Clé étrangère vers le spot. `ideal_tide_stage` vaut `toutes` par défaut. Les fenêtres circulaires (ex. 330 → 30) sont acceptées. |
 | `surf_level_conditions_reference` | 1 ligne par niveau | Sheet « Ref - surf_level_conditions_ref » | Les CHECK imposent `min ≤ idéal min ≤ idéal max ≤ max` : un seuil mal saisi est refusé par la base elle-même. |
-| `marine_forecast` | 1 ligne par spot et par heure | Open-Meteo + `tide.py` | Unicité `(spot_id, forecast_datetime)` : chaque collecte met à jour les heures existantes, sans doublon. |
+| `marine_forecast` | 1 ligne par spot et par heure | Open-Meteo + `tide.py` | Unicité `(spot_id, forecast_datetime)` : chaque collecte met à jour les heures existantes, sans doublon, puis supprime les heures antérieures à J-1. |
 | `spot_hour_scores` | 1 ligne par spot, heure et niveau | `score.py` | Les CHECK garantissent qu'un créneau non éligible a une raison et pas de score global. |
 
 Les « enum » du doc sont des CHECK sur du texte plutôt que des types ENUM Postgres : ajouter une valeur revient à modifier une ligne.
@@ -56,6 +56,7 @@ Pour chaque spot de `surf_spot_properties` (lus en base, donc un spot ajouté au
 - **Unités et conventions du doc :** heures en UTC (`timezone=GMT`), vent en km/h, directions en « d'où ça vient », comme les fenêtres du référentiel.
 - **Fenêtre :** `past_days=1` et `forecast_days=8`. Le jour passé et le jour en plus servent à encadrer chaque heure utile par une basse mer et une pleine mer, nécessaires au calcul de la marée.
 - **Sobriété :** une seule requête par API pour tous les spots (Open-Meteo accepte des listes de coordonnées), soit 2 appels par collecte. En cas d'échec : 3 essais avec attente croissante, puis un nouvel essai spot par spot.
+- **Purge :** une fois la collecte réussie, les heures antérieures à J-1 (début de la fenêtre renvoyée par Open-Meteo) sont supprimées. La table garde ainsi environ 3 000 lignes. Si un spot échoue, rien n'est supprimé.
 - **Traçabilité :** `data_source` et `retrieved_at` sur chaque ligne. Le `forecast_retrieved_at` des scores pointe vers cette collecte.
 - Le script sort en erreur si un spot échoue : le scoring n'est alors pas lancé, et l'app garde les derniers scores, avec leur date.
 
@@ -82,6 +83,6 @@ Les trois requêtes de contrôle se lancent dans le SQL Editor de Supabase, en l
 
 `006_scores_check.sql` contrôle ensuite les scores : une ligne par spot, heure et niveau, calcul de moins de 13 h fait sur la dernière collecte, aucun spot éligible sous son niveau minimum, et répartition des scores.
 
-Les tests unitaires (`python -m pytest tests`, 41 tests) vérifient sans réseau la marée sur des courbes simulées, le rejet des dates parasites du Sheet, l'assemblage des lignes, chaque règle de scoring du doc, la sélection des créneaux (fuseau horaire, extension du créneau, top 5, raisons d'absence) et les explications (le détail affiché retombe bien sur le score global).
+Les tests unitaires (`python -m pytest tests`, 42 tests) vérifient sans réseau la marée sur des courbes simulées, le rejet des dates parasites du Sheet, l'assemblage des lignes, chaque règle de scoring du doc, la sélection des créneaux (fuseau horaire, extension du créneau, top 5, raisons d'absence) et les explications (le détail affiché retombe bien sur le score global).
 
 [← Retour au README](../README.md)

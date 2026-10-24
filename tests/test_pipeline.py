@@ -7,7 +7,9 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from collect import build_rows, is_daylight  # noqa: E402
+import datetime as dt  # noqa: E402
+
+from collect import build_rows, is_daylight, purge_cutoff  # noqa: E402
 from sync_sheets import clean_table  # noqa: E402
 from tide import compute_tide  # noqa: E402
 
@@ -66,3 +68,12 @@ def test_daylight_from_sunrise_and_sunset():
     day = is_daylight(times, daily)
     assert day[1] is False and day[2] is True     # 06:00 avant le lever, 07:00 après
     assert day[12] is True and day[13] is False   # 17:00 avant le coucher, 18:00 après
+
+
+def test_purge_keeps_the_collected_window():
+    # Collecte du 25/10 à 4 h UTC : Open-Meteo renvoie à partir du 24/10 à 0 h (past_days=1)
+    now = dt.datetime(2026, 10, 25, 4, 2, tzinfo=dt.timezone.utc)
+    assert purge_cutoff(now, past_days=1) == dt.datetime(2026, 10, 24, tzinfo=dt.timezone.utc)
+    # même résultat si l'heure est donnée à l'heure de Paris
+    paris = dt.timezone(dt.timedelta(hours=1))
+    assert purge_cutoff(now.astimezone(paris), past_days=1) == purge_cutoff(now, past_days=1)

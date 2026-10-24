@@ -2,11 +2,14 @@
 
 Pour chaque spot de surf_spot_properties : récupère les prévisions horaires
 (past_days=1, forecast_days=8), calcule la marée, puis fait un upsert sur
-(spot_id, forecast_datetime).
+(spot_id, forecast_datetime). Si tout a réussi, supprime ensuite les heures
+plus anciennes que la fenêtre collectée (avant J-1), pour que la table ne
+grossisse pas indéfiniment.
 
 Usage :
     python collect.py               # collecte et écrit dans Supabase
     python collect.py --dry-run     # collecte et enregistre un CSV, sans écrire en base
+                                    # (affiche aussi le nombre de lignes que la purge supprimerait)
     python collect.py --spot la_torche
 """
 import argparse
@@ -92,6 +95,28 @@ def fetch_hourly(url: str, spots: list[dict], fields: dict, extra: dict | None =
     return {s["spot_id"]: _to_df(p, fields) for s, p in zip(spots, payload)}
 
 
+def purge_cutoff(now: dt.datetime, past_days: int = config.PAST_DAYS) -> dt.datetime:
+    """Début de la fenêtre renvoyée par Open-Meteo : minuit UTC, past_days jours avant
+    aujourd'hui. Les heures antérieures ne sont plus collectées et peuvent être supprimées."""
+    today = now.astimezone(dt.timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    return today - dt.timedelta(days=past_days)
+
+
+def purge_old_forecasts(client, cutoff: dt.datetime, spot_id: str | None = None, dry_run: bool = False) -> int:
+    """Supprime (ou compte, en dry-run) les prévisions antérieures à cutoff. Renvoie le nombre de lignes."""
+    query = (client.table("marine_forecast").select("forecast_id", count="exact")
+             .lt("forecast_datetime", cutoff.isoformat()))
+    if spot_id:
+        query = query.eq("spot_id", spot_id)
+    count = query.limit(1).execute().count or 0
+    if count and not dry_run:
+        delete = client.table("marine_forecast").delete().lt("forecast_datetime", cutoff.isoformat())
+        if spot_id:
+            delete = delete.eq("spot_id", spot_id)
+        delete.execute()
+    return count
+
+
 def build_rows(spot_id: str, marine: pd.DataFrame, weather: pd.DataFrame, retrieved_at: str) -> list[dict]:
     df = marine.merge(weather, on="forecast_datetime", how="outer").sort_values("forecast_datetime")
     levels = [None if pd.isna(v) else float(v) for v in df["sea_level_height_m"]]
@@ -157,6 +182,14 @@ def main():
     if args.dry_run and all_rows:
         pd.DataFrame(all_rows).to_csv("forecast_preview.csv", index=False)
         print("Aperçu enregistré dans forecast_preview.csv (rien n'a été écrit en base).")
+
+    # Purge des heures passées, seulement si toute la collecte a réussi :
+    # en cas d'échec, on garde tout tel quel.
+    if not failed:
+        cutoff = purge_cutoff(dt.datetime.now(dt.timezone.utc))
+        n = purge_old_forecasts(client, cutoff, args.spot, args.dry_run)
+        verb = "seraient supprimées" if args.dry_run else "supprimées"
+        print(f"Purge : {n} lignes antérieures au {cutoff:%Y-%m-%d %H:%M} UTC {verb}")
 
     if failed:
         # code de sortie 1 : GitHub Actions ne lancera pas le scoring

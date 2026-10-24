@@ -37,7 +37,7 @@ Ce projet est aussi une démonstration de ma façon de construire un produit ave
 
 - **Moi** : le besoin, les règles métier et les décisions. Je fixe les seuils par niveau dans le référentiel, je valide chaque règle de scoring et chaque choix d'interface, je relis les specs, je lance les tests et la recette, et je repère les incohérences dans les résultats (une houle de 2,1 m proposée à un intermédiaire, une houle « idéale » au bas de la fourchette d'un pro, un formulaire qui garde l'ancienne recherche…).
 - **Claude** : propositions d'architecture et de règles, écriture du code et des tests, rédaction des specs dans le Google Doc, maquettes dans Figma, analyses sur les données d'audit et corrections à partir de mes retours.
-- **La méthode** : avancer par petites étapes vérifiables, faire valider chaque décision avant de coder, tout documenter (specs, décisions, calibration) et tout tester (41 tests hors ligne, 20 contrôles SQL).
+- **La méthode** : avancer par petites étapes vérifiables, faire valider chaque décision avant de coder, tout documenter (specs, décisions, calibration) et tout tester (42 tests hors ligne, 20 contrôles SQL).
 
 ## Ce que j'ai fait
 
@@ -45,7 +45,7 @@ Ce projet est aussi une démonstration de ma façon de construire un produit ave
 - **Modélisation et base de données** : 5 tables PostgreSQL (Supabase) avec contraintes d'intégrité (CHECK, clés étrangères), sécurité par ligne (RLS) et accès en lecture seule pour l'application.
 - **Pipeline de données automatisé** : référentiels saisis dans Google Sheets, nettoyés et contrôlés « tout ou rien » ; prévisions Open-Meteo collectées et marée calculée à partir de la hauteur d'eau ; exécution 3 fois par jour avec GitHub Actions.
 - **Algorithme de recommandation** : scoring pondéré par spot, heure et niveau (houle, période, vent, marée), règles d'éligibilité, pénalité de vent de mer, calibration rejouée sur 11 760 scores réels avant mise en production.
-- **Qualité** : 20 contrôles SQL sur les données et 41 tests unitaires hors ligne (marée, scoring, sélection, explications).
+- **Qualité** : 20 contrôles SQL sur les données et 42 tests unitaires hors ligne (marée, scoring, sélection, explications).
 - **Interface** : maquettes Figma (3 directions, palette, échelle de couleurs), puis application Streamlit responsive avec carte, explications en français générées par templates (sans IA) et export CSV.
 
 ## Chiffres clés
@@ -56,7 +56,7 @@ Ce projet est aussi une démonstration de ma façon de construire un produit ave
 | Niveaux | 5 (débutant, intermédiaire, avancé, expert, pro) |
 | Scores recalculés | 11 760 (14 spots × 168 h × 5 niveaux), 3 fois par jour |
 | Appels API par collecte | 2 (toutes les coordonnées dans une seule requête par API) |
-| Contrôles qualité | 20 contrôles SQL, 41 tests unitaires |
+| Contrôles qualité | 20 contrôles SQL, 42 tests unitaires |
 
 ## Architecture
 
@@ -110,7 +110,7 @@ Interface Streamlit (ordinateur et téléphone)
 | `selection.py`, `explain.py`, `ui.py` | Sélection des créneaux, explications, habillage (Python pur, testés sans Streamlit) |
 | `config.py`, `db.py` | Paramètres et connexion Supabase |
 | `sql/` | Schéma, droits, migrations et requêtes de contrôle qualité |
-| `tests/` | 41 tests unitaires hors ligne (`python -m pytest tests`) |
+| `tests/` | 42 tests unitaires hors ligne (`python -m pytest tests`) |
 | `docs/` | Détail du pipeline, du scoring et de l'interface |
 | `.github/workflows/` | Collecte et scoring 3 fois par jour, synchronisation manuelle du Sheet |
 | `.streamlit/` | Thème de l'app et modèle de fichier de secrets |
