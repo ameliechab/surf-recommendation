@@ -1,0 +1,13 @@
+# Thème de l'app FindYourWave (maquette C v2). La police Montserrat est chargée par le CSS de ui.py.
+[theme]
+base = "light"
+primaryColor = "#1546A0"
+backgroundColor = "#ECEFF6"
+secondaryBackgroundColor = "#F1F2F7"
+textColor = "#13203F"
+
+[client]
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false

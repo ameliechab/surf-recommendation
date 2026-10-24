@@ -20,7 +20,7 @@ Google Sheet (référentiels, saisis à la main)
 GitHub Actions : sync, collecte puis scoring à 4 h, 11 h et 17 h UTC
 ```
 
-**État :** 14 spots, 5 niveaux, 216 heures de prévisions par spot (J-1 à J+8) et 11 760 scores (14 spots × 168 h × 5 niveaux), rafraîchis 3 fois par jour. Les données sont vérifiées par les requêtes SQL du dossier `sql/` (voir [Qualité des données](#qualité-des-données)). Prochaine étape : l'interface Streamlit.
+**État :** 14 spots, 5 niveaux, 216 heures de prévisions par spot (J-1 à J+8) et 11 760 scores (14 spots × 168 h × 5 niveaux), rafraîchis 3 fois par jour. Les données sont vérifiées par les requêtes SQL du dossier `sql/` (voir [Qualité des données](#qualité-des-données)). L'interface Streamlit (`app.py`) lit ces scores en lecture seule et affiche, pour chaque jour choisi, les 5 meilleurs spots avec leur créneau, leur explication et une carte.
 
 ## Stack
 
@@ -31,6 +31,7 @@ GitHub Actions : sync, collecte puis scoring à 4 h, 11 h et 17 h UTC
 | Google Sheets | Saisie des référentiels par un humain (spots, conditions idéales, seuils par niveau) |
 | Open-Meteo Marine + Weather | Prévisions horaires gratuites, sans clé |
 | GitHub Actions | Planification (cron) et exécution, secrets chiffrés |
+| Streamlit + pydeck | Interface web (ordinateur et téléphone) et carte des spots |
 
 ## Contenu du dépôt
 
@@ -49,7 +50,12 @@ GitHub Actions : sync, collecte puis scoring à 4 h, 11 h et 17 h UTC
 | `tide.py` | Calcul de `tide_level_pct`, `tide_direction`, `tide_stage` |
 | `score.py` | Éligibilité, sous-scores et score global → `spot_hour_scores` |
 | `config.py`, `db.py` | Paramètres (lus dans `.env` ou les secrets GitHub) et connexion Supabase |
-| `tests/` | Tests unitaires hors ligne : marée, rejet des dates du Sheet, assemblage des lignes, chaque règle de scoring |
+| `app.py` | Interface Streamlit : formulaire, résultats par jour, carte, rafraîchissement, export CSV |
+| `selection.py` | Filtres distance, dates et horaires (heure de Paris), meilleur créneau par spot, top 5, raison d'absence |
+| `explain.py` | Explications en français (templates, sans IA), détail du score, libellés |
+| `ui.py` | Habillage : CSS, bandeau, cartes de résultat, échelle de couleurs « Lagon » |
+| `.streamlit/` | Thème de l'app (`config.toml`) et modèle de secrets (`secrets.toml.example`) |
+| `tests/` | Tests unitaires hors ligne : marée, rejet des dates du Sheet, assemblage des lignes, chaque règle de scoring, sélection, explications, habillage |
 | `.github/workflows/` | `collect.yml` (3×/jour) et `sync_sheets.yml` (manuel) |
 
 ## Modèle de données
@@ -66,7 +72,7 @@ Les tables reprennent la section « Modèle de données » du doc. Les choix d'i
 
 Les « enum » du doc sont des CHECK sur du texte plutôt que des types ENUM Postgres : ajouter une valeur revient à modifier une ligne.
 
-**Sécurité.** Row Level Security est activé partout, avec une politique de lecture seule pour la clé publique (la future app Streamlit). Seuls les scripts écrivent, avec la clé secrète. Cette clé n'est jamais dans le code : elle vit dans `.env` en local (exclu de Git) et dans les *Secrets* GitHub pour l'automatisation.
+**Sécurité.** Row Level Security est activé partout, avec une politique de lecture seule pour la clé publique (l'app Streamlit). Seuls les scripts écrivent, avec la clé secrète. Cette clé n'est jamais dans le code : elle vit dans `.env` en local (exclu de Git) et dans les *Secrets* GitHub pour l'automatisation.
 
 ## Ce que fait le code, par rapport aux specs
 
@@ -170,6 +176,21 @@ Les créneaux retirés sont des mers plates (459 lignes `houle_trop_faible`). Le
 
 Prévu en V2 : `tide_coefficient` (source SHOM), aujourd'hui vide, et `crowd_level`, stocké mais pas utilisé par l'algorithme.
 
+### 5. Interface : `app.py`, `selection.py`, `explain.py`, `ui.py`
+
+Sections « Processus de recommandation » (étape recherche utilisateur), « Sélection », « Sorties » et onglet « Interface utilisateur » du doc. Maquette : Figma « FindYourWave – Maquettes interface », planche C v2.
+
+| Étape | Ce que fait le code |
+|---|---|
+| Lecture | Clé **publishable** (rôle `anon`, lecture seule). `spot_hour_scores` du niveau choisi, `marine_forecast` et `surf_spot_properties` sur les jours demandés, page par page, gardés en cache 10 min. |
+| Filtres | Distance à vol d'oiseau depuis une liste de villes ; date et heure converties de l'UTC vers Europe/Paris ; un créneau compte s'il se termine avant l'heure de fin choisie. |
+| Sélection | Par spot et par jour : heure au meilleur score, étendue aux heures consécutives à moins de 10 points. Score minimum 50, 5 résultats au plus, à égalité le spot le plus proche. |
+| Explication | Les 2 plus fortes contributions (sous-score × poids), puis tout sous-score < 50 et le vent de mer s'il retire au moins 5 % du score. Le détail du score affiche les contributions et la pénalité de vent de mer : leur somme retombe sur le score global. |
+| Absence de résultat | Raison principale par jour : aucun spot dans le rayon, pas de prévision, niveau, nuit ou horaires, houle trop faible ou trop forte, vent trop fort, conditions moyennes. |
+| Fraîcheur | Date du dernier calcul (`scored_at`), bouton « Rafraîchir » (vide le cache, ne relance pas de collecte), alerte si les scores ont plus de 12 h. |
+
+`selection.py` et `explain.py` sont du Python pur, testés sans Streamlit. Le module s'appelle `selection.py` et non `select.py`, car `select` est un module de la bibliothèque standard de Python.
+
 ## Qualité des données
 
 Les trois requêtes de contrôle se lancent dans le SQL Editor de Supabase, en lecture seule. Résultats sur les données réelles :
@@ -182,7 +203,7 @@ Les trois requêtes de contrôle se lancent dans le SQL Editor de Supabase, en l
 
 `006_scores_check.sql` contrôle ensuite les scores : une ligne par spot, heure et niveau, calcul de moins de 13 h fait sur la dernière collecte, aucun spot éligible sous son niveau minimum, et répartition des scores.
 
-Les tests unitaires (`python -m pytest tests`, 14 tests) vérifient sans réseau la marée sur des courbes simulées, le rejet des dates parasites du Sheet, l'assemblage des lignes et chaque règle de scoring du doc.
+Les tests unitaires (`python -m pytest tests`, 40 tests) vérifient sans réseau la marée sur des courbes simulées, le rejet des dates parasites du Sheet, l'assemblage des lignes, chaque règle de scoring du doc, la sélection des créneaux (fuseau horaire, extension du créneau, top 5, raisons d'absence) et les explications (le détail affiché retombe bien sur le score global).
 
 ## Lancer le projet
 
@@ -200,6 +221,7 @@ cp .env.example .env               # puis renseigner l'URL et la clé secrète S
 3. Collecter : `python collect.py --spot la_torche --dry-run` (un spot, aperçu dans `forecast_preview.csv`), puis `python collect.py`.
 4. Scorer : `python score.py --dry-run` (aperçu dans `scores_preview.csv`), puis `python score.py`.
 5. Contrôler : exécuter `sql/003_checks.sql` à `006_scores_check.sql`.
+6. Interface : copier `.streamlit/secrets.toml.example` en `.streamlit/secrets.toml` (URL et clé **publishable**), puis `streamlit run app.py`. L'app s'ouvre sur `http://localhost:8501`.
 
 **Automatisation.** Dans GitHub, **Settings → Secrets and variables → Actions** :
 - *Secrets* (chiffrés, invisibles même dans les logs) : `SUPABASE_URL`, `SUPABASE_SECRET_KEY` ;

@@ -6,3 +6,4 @@ __pycache__/
 .vscode/
 forecast_preview.csv
 scores_preview.csv
+.streamlit/secrets.toml
