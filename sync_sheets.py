@@ -51,7 +51,7 @@ TABLES = {
             "spot_id": "id", "min_level": "enum",
             "ideal_swell_orientation_min": "int", "ideal_swell_orientation_max": "int",
             "ideal_wind_orientation_min": "int", "ideal_wind_orientation_max": "int",
-            "ideal_tide_stage": "enum", "crowd_level": "int",
+            "ideal_tide_stage": "enum", "crowd_level": "int", "swell_exposure": "float",
         },
         "required": ["spot_id", "min_level"],
         "enums": {
@@ -60,7 +60,7 @@ TABLES = {
         },
         "ranges": {c: (0, 360) for c in ["ideal_swell_orientation_min", "ideal_swell_orientation_max",
                                           "ideal_wind_orientation_min", "ideal_wind_orientation_max"]}
-                  | {"crowd_level": (1, 5)},
+                  | {"crowd_level": (1, 5), "swell_exposure": (0.1, 1)},
     },
     "surf_level_conditions_reference": {
         "key": "surf_level",

@@ -1,10 +1,12 @@
 # FindYourWave
 
-**Trouver le meilleur spot de surf en Bretagne, heure par heure, selon ton niveau.**
+**Trouver le meilleur spot de surf, heure par heure, selon ton niveau.\***
+
+\* Pour l'instant en Bretagne et au Maroc (région de Taghazout).
 
 [![Ouvrir l'application](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://findyourwave.streamlit.app/)
 
-FindYourWave note 14 spots bretons pour chacun des 5 niveaux de surf (de débutant à pro), à partir des prévisions de houle, de vent et de marée. L'application propose, pour chaque jour choisi, les 5 meilleurs créneaux autour de ta ville de départ, et explique en français pourquoi chacun est recommandé et ce qui peut poser problème.
+FindYourWave note 33 spots (14 en Bretagne, 19 au Maroc autour de Taghazout) pour chacun des 5 niveaux de surf (de débutant à pro), à partir des prévisions de houle, de vent et de marée. L'application propose, pour chaque jour choisi, les 5 meilleurs créneaux autour de ta ville de départ, et explique en français pourquoi chacun est recommandé et ce qui peut poser problème.
 
 <p align="center">
   <img src="docs/images/app-recherche.jpg" alt="Formulaire de recherche : niveau, ville de départ, distance, dates et horaires" width="32%">
@@ -37,7 +39,7 @@ Ce projet est aussi une démonstration de ma façon de construire un produit ave
 
 - **Moi** : le besoin, les règles métier et les décisions. Je fixe les seuils par niveau dans le référentiel, je valide chaque règle de scoring et chaque choix d'interface, je relis les specs, je lance les tests et la recette, et je repère les incohérences dans les résultats (une houle de 2,1 m proposée à un intermédiaire, une houle « idéale » au bas de la fourchette d'un pro, un formulaire qui garde l'ancienne recherche…).
 - **Claude** : propositions d'architecture et de règles, écriture du code et des tests, rédaction des specs dans le Google Doc, maquettes dans Figma, analyses sur les données d'audit et corrections à partir de mes retours.
-- **La méthode** : avancer par petites étapes vérifiables, faire valider chaque décision avant de coder, tout documenter (specs, décisions, calibration) et tout tester (42 tests hors ligne, 20 contrôles SQL).
+- **La méthode** : avancer par petites étapes vérifiables, faire valider chaque décision avant de coder, tout documenter (specs, décisions, calibration) et tout tester (50 tests hors ligne, 20 contrôles SQL).
 
 ## Ce que j'ai fait
 
@@ -45,18 +47,19 @@ Ce projet est aussi une démonstration de ma façon de construire un produit ave
 - **Modélisation et base de données** : 5 tables PostgreSQL (Supabase) avec contraintes d'intégrité (CHECK, clés étrangères), sécurité par ligne (RLS) et accès en lecture seule pour l'application.
 - **Pipeline de données automatisé** : référentiels saisis dans Google Sheets, nettoyés et contrôlés « tout ou rien » ; prévisions Open-Meteo collectées et marée calculée à partir de la hauteur d'eau ; exécution 3 fois par jour avec GitHub Actions.
 - **Algorithme de recommandation** : scoring pondéré par spot, heure et niveau (houle, période, vent, marée), règles d'éligibilité, pénalité de vent de mer, calibration rejouée sur 11 760 scores réels avant mise en production.
-- **Qualité** : 20 contrôles SQL sur les données et 42 tests unitaires hors ligne (marée, scoring, sélection, explications).
+- **Qualité** : 20 contrôles SQL sur les données et 50 tests unitaires hors ligne (marée, scoring, sélection, explications, fuseaux horaires).
 - **Interface** : maquettes Figma (3 directions, palette, échelle de couleurs), puis application Streamlit responsive avec carte, explications en français générées par templates (sans IA) et export CSV.
 
 ## Chiffres clés
 
 | | |
 |---|---|
-| Spots couverts | 14, en Finistère, Morbihan et Côtes-d'Armor |
+| Spots couverts | 33 : 14 en Bretagne (Finistère, Morbihan, Côtes-d'Armor) et 19 au Maroc (d'Imsouane à Agadir) |
 | Niveaux | 5 (débutant, intermédiaire, avancé, expert, pro) |
-| Scores recalculés | 11 760 (14 spots × 168 h × 5 niveaux), 3 fois par jour |
+| Villes de départ | 22 : 18 en Bretagne et alentours, 4 au Maroc (Agadir, Imsouane, Tamraght, Taghazout) |
+| Scores recalculés | 27 720 (33 spots × 168 h × 5 niveaux), 3 fois par jour |
 | Appels API par collecte | 2 (toutes les coordonnées dans une seule requête par API) |
-| Contrôles qualité | 20 contrôles SQL, 42 tests unitaires |
+| Contrôles qualité | 20 contrôles SQL, 50 tests unitaires |
 
 ## Architecture
 
@@ -95,9 +98,9 @@ Interface Streamlit (ordinateur et téléphone)
 
 **1. Pipeline de données.** Les référentiels (spots, fenêtres de houle et de vent idéales, seuils par niveau) sont saisis dans Google Sheets puis chargés en base après contrôle : décimales françaises, nombres transformés en dates par Sheets, bornes, cohérence entre onglets. Les prévisions horaires viennent d'Open-Meteo. Le stade et le sens de la marée sont calculés à partir de la hauteur d'eau. → [docs/pipeline.md](docs/pipeline.md)
 
-**2. Scoring.** Pour chaque spot, chaque heure des 7 prochains jours et chaque niveau : éligibilité (niveau du spot, nuit, houle trop faible ou trop forte, vent trop fort), puis 4 sous-scores de 0 à 100 et un score global pondéré (houle 40 %, période 20 %, vent 25 %, marée 15 %), réduit quand le vent souffle de la mer. Une houle mal orientée est jugée sur sa hauteur utile sur le spot. → [docs/scoring.md](docs/scoring.md)
+**2. Scoring.** Pour chaque spot, chaque heure des 7 prochains jours et chaque niveau : éligibilité (niveau du spot, nuit, houle trop faible ou trop forte, vent trop fort), puis 4 sous-scores de 0 à 100 et un score global pondéré (houle 40 %, période 20 %, vent 25 %, marée 15 %), réduit quand le vent souffle de la mer. La houle est jugée sur sa hauteur utile sur le spot : réduite quand elle arrive hors de la fenêtre du spot, et dans les spots abrités (coefficient d'abri `swell_exposure`, par exemple 0,5 pour la plage d'Agadir, protégée par le port). → [docs/scoring.md](docs/scoring.md)
 
-**3. Interface.** L'utilisateur choisit son niveau, sa ville de départ, une distance, des dates et des horaires. Pour chaque jour, l'app garde le meilleur créneau de chaque spot, affiche les 5 meilleurs et explique le résultat : points forts, remarques, points de vigilance et détail du score. → [docs/interface.md](docs/interface.md)
+**3. Interface.** L'utilisateur choisit son niveau, sa ville de départ, une distance, des dates et des horaires. Les horaires sont ceux du lieu de surf : heure de Paris en France, heure du Maroc (UTC, retour à l'heure GMT le 20 septembre 2026) au Maroc. Pour chaque jour, l'app garde le meilleur créneau de chaque spot, affiche les 5 meilleurs et explique le résultat : points forts, remarques, points de vigilance et détail du score. → [docs/interface.md](docs/interface.md)
 
 ## Contenu du dépôt
 
@@ -110,7 +113,7 @@ Interface Streamlit (ordinateur et téléphone)
 | `selection.py`, `explain.py`, `ui.py` | Sélection des créneaux, explications, habillage (Python pur, testés sans Streamlit) |
 | `config.py`, `db.py` | Paramètres et connexion Supabase |
 | `sql/` | Schéma, droits, migrations et requêtes de contrôle qualité |
-| `tests/` | 42 tests unitaires hors ligne (`python -m pytest tests`) |
+| `tests/` | 50 tests unitaires hors ligne (`python -m pytest tests`) |
 | `docs/` | Détail du pipeline, du scoring et de l'interface |
 | `.github/workflows/` | Collecte et scoring 3 fois par jour, synchronisation manuelle du Sheet |
 | `.streamlit/` | Thème de l'app et modèle de fichier de secrets |
@@ -118,8 +121,9 @@ Interface Streamlit (ordinateur et téléphone)
 ## Suite (V2)
 
 - Coefficient de marée (source SHOM) et fréquentation des spots (`crowd_level`) dans le scoring.
-- Ville de départ libre (géocodage) à la place de la liste de 18 villes.
-- Ouverture à d'autres régions de surf.
+- Ville de départ libre (géocodage) à la place de la liste de 22 villes.
+- Ajuster les coefficients d'abri (Agadir 0,5, The Bay et Hash Point 0,7) en comparant les scores aux vagues observées sur place.
+- Ouverture à d'autres régions de surf (après la Bretagne et le Maroc).
 
 <details>
 <summary><b>Installer et lancer le projet en local</b></summary>

@@ -100,3 +100,18 @@ def test_night_is_not_eligible():
     row = score.score_hour(GOOD_HOUR | {"is_daylight": False}, LA_TORCHE, "debutant", DEBUTANT)
     assert row["ineligibility_reason"] == "nuit" and row["global_score"] is None
     assert score.score_hour(GOOD_HOUR | {"is_daylight": True}, LA_TORCHE, "debutant", DEBUTANT)["is_eligible"]
+
+
+def test_sheltered_spot_judges_the_reduced_height():
+    # Agadir (abri 0,5) : 2 m au large, bien orientés -> 1 m utile, éligible pour un débutant (max 1,2 m)
+    agadir = LA_TORCHE | {"spot_id": "agadir", "swell_exposure": 0.5}
+    big = GOOD_HOUR | {"swell_height_m": 2.0}
+    assert score.score_hour(big, LA_TORCHE, "debutant", DEBUTANT)["ineligibility_reason"] == "houle_trop_forte"
+    row = score.score_hour(big, agadir, "debutant", DEBUTANT)
+    assert row["is_eligible"] and row["swell_direction_score"] == 100  # l'orientation n'est pas en cause
+    # 0,6 m au large -> 0,3 m utile : trop petit pour surfer
+    small = GOOD_HOUR | {"swell_height_m": 0.6}
+    assert score.score_hour(small, agadir, "debutant", DEBUTANT)["ineligibility_reason"] == "houle_trop_faible"
+    # vide dans le Sheet = spot exposé
+    assert score.swell_exposure(LA_TORCHE | {"swell_exposure": None}) == 1.0
+    assert score.score_hour(GOOD_HOUR, LA_TORCHE | {"swell_exposure": None}, "debutant", DEBUTANT)["global_score"] == 100

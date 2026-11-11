@@ -9,7 +9,7 @@ Sections « Processus de recommandation » (étape recherche utilisateur), « S�
 | Étape | Ce que fait le code |
 |---|---|
 | Lecture | Clé **publishable** (rôle `anon`, lecture seule). `spot_hour_scores` du niveau choisi, `marine_forecast` et `surf_spot_properties` sur les jours demandés, page par page, gardés en cache 10 min. |
-| Filtres | Distance à vol d'oiseau depuis une liste de villes ; date et heure converties de l'UTC vers Europe/Paris ; un créneau compte s'il se termine avant l'heure de fin choisie. |
+| Filtres | Distance à vol d'oiseau depuis une liste de villes ; date et heure converties de l'UTC vers l'heure locale de la ville de départ (Europe/Paris en France, UTC au Maroc depuis le retour à l'heure GMT du 20/09/2026) ; un créneau compte s'il se termine avant l'heure de fin choisie. |
 | Sélection | Par spot et par jour : heure au meilleur score, étendue aux heures consécutives à moins de 10 points. Score minimum 50, 5 résultats au plus, à égalité le spot le plus proche. |
 | Explication | Templates en français, sans IA. Phrase principale : les 2 plus fortes contributions (sous-score × poids) parmi les critères notés 50 ou plus, avec la raison s'ils ne sont que corrects, et « en bas / en haut de fourchette » pour une houle idéale proche d'une borne. Remarque (texte gris) pour tout autre sous-score de 50 à 69, point de vigilance (barre rose) sous 50 et pour le vent de mer s'il retire au moins 5 % du score. Le détail du score affiche les contributions et la pénalité de vent de mer : leur somme retombe sur le score global. |
 | Houle affichée | Au large (prévision brute) et sur le spot (hauteur × facteur de direction) : c'est la hauteur sur le spot que le scoring compare aux seuils du niveau. |

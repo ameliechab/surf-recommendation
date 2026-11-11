@@ -23,6 +23,7 @@ REMARK_BELOW = 70        # entre 50 et 70 : une remarque qui dit pourquoi le cri
 ONSHORE_MENTION = 0.95   # on parle du vent de mer s'il retire au moins 5 % du score
 MISALIGNED_SWELL = 80    # swell_direction_score sous lequel la houle est « mal orientée »
 EFFECTIVE_SHOWN = 95     # en dessous, on affiche aussi la hauteur utile (hauteur × facteur de direction)
+SHELTERED_BELOW = 0.95   # swell_exposure sous lequel le spot est « abrité » (vagues plus petites qu'au large)
 
 DIRECTIONS = ["nord", "nord-est", "est", "sud-est", "sud", "sud-ouest", "ouest", "nord-ouest"]
 WEEKDAYS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
@@ -86,22 +87,46 @@ def slot_label(start_hour: int, end_hour: int) -> str:
     return f"{start_hour} h – {end_hour} h"
 
 
+def exposure(cond: dict) -> float:
+    """Coefficient d'abri du spot (swell_exposure), ajouté aux conditions par l'application."""
+    value = cond.get("swell_exposure")
+    return 1.0 if value is None else float(value)
+
+
+def sheltered(cond: dict) -> bool:
+    return exposure(cond) < SHELTERED_BELOW
+
+
+def misaligned(scores: dict | None) -> bool:
+    factor = (scores or {}).get("swell_direction_score")
+    return factor is not None and factor < EFFECTIVE_SHOWN
+
+
 def spot_height(cond: dict, scores: dict | None) -> float | None:
-    """Hauteur sur le spot = hauteur au large × facteur de direction : c'est elle que juge le
-    scoring (éligibilité et score de houle). None sans scores."""
+    """Hauteur sur le spot = hauteur au large × facteur de direction × coefficient d'abri :
+    c'est elle que juge le scoring (éligibilité et score de houle). None sans scores."""
     factor = (scores or {}).get("swell_direction_score")
     if factor is None:
         return None
-    return cond["swell_height_m"] * factor / 100
+    return cond["swell_height_m"] * factor / 100 * exposure(cond)
 
 
 def effective_height(cond: dict, scores: dict | None) -> float | None:
-    """Hauteur sur le spot quand la houle arrive hors de la fenêtre du spot ; None si elle est
-    bien orientée (les deux hauteurs sont alors égales)."""
-    factor = (scores or {}).get("swell_direction_score")
-    if factor is None or factor >= EFFECTIVE_SHOWN:
+    """Hauteur sur le spot quand elle diffère de la houle au large (houle hors de la fenêtre
+    du spot, ou spot abrité) ; None sinon (les deux hauteurs sont alors égales)."""
+    if not (misaligned(scores) or sheltered(cond)):
         return None
     return spot_height(cond, scores)
+
+
+def _reduction_reason(cond: dict, scores: dict | None) -> str:
+    """Pourquoi la houle est plus petite sur le spot qu'au large."""
+    reasons = []
+    if misaligned(scores):
+        reasons.append("en partie hors de la fenêtre du spot")
+    if sheltered(cond):
+        reasons.append("spot abrité")
+    return " et ".join(reasons)
 
 
 def conditions_list(cond: dict, scores: dict | None = None) -> list[tuple[str, str]]:
@@ -113,10 +138,11 @@ def conditions_list(cond: dict, scores: dict | None = None) -> list[tuple[str, s
     if on_spot is None:
         swell_items = [("Houle", offshore)]
     else:
-        aligned = scores["swell_direction_score"] >= EFFECTIVE_SHOWN
+        state = ["mal orientée" if misaligned(scores) else "bien orientée"]
+        if sheltered(cond):
+            state.append("spot abrité")
         swell_items = [("Houle au large", offshore),
-                       ("Houle sur le spot", f"{fr_number(on_spot)} m, "
-                                             f"{'bien orientée' if aligned else 'mal orientée'}")]
+                       ("Houle sur le spot", f"{fr_number(on_spot)} m, {', '.join(state)}")]
     items = [
         *swell_items,
         ("Vent", _wind_text(cond)),
@@ -196,10 +222,10 @@ def _positive(key: str, scores: dict, cond: dict, level_ref: dict | None = None)
                 what = "houle correcte, un peu petite pour ton niveau"
         effective = effective_height(cond, scores)
         if effective is not None:
-            # houle mal orientée : le scoring juge la hauteur utile, pas la hauteur au large
+            # houle mal orientée ou spot abrité : le scoring juge la hauteur utile, pas celle du large
             return (f"{what} sur ce spot (environ {fr_number(effective)} m utiles : "
                     f"{fr_number(cond['swell_height_m'])} m au large {from_direction(cond['swell_direction_deg'])}, "
-                    "en partie hors de la fenêtre du spot)")
+                    f"{_reduction_reason(cond, scores)})")
         return f"{what} ({fr_number(cond['swell_height_m'])} m {from_direction(cond['swell_direction_deg'])})"
     if key == "period":
         period = fr_number(cond["swell_period_s"], 0)
@@ -249,7 +275,7 @@ def _remark(key: str, scores: dict, cond: dict, level_ref: dict | None, onshore_
     """Raison d'un critère noté entre WARNING_BELOW et REMARK_BELOW (remarque, ton neutre)."""
     if key == "swell":
         on_spot = spot_height(cond, scores) or cond["swell_height_m"]
-        if effective_height(cond, scores) is not None:
+        if misaligned(scores):
             return (f"houle en partie mal orientée pour ce spot ({fr_number(on_spot)} m sur le spot pour "
                     f"{fr_number(cond['swell_height_m'])} m au large) : vagues plus petites")
         if level_ref and on_spot > level_ref["swell_height_ideal_max"]:
@@ -288,7 +314,7 @@ def _warning(key: str, scores: dict, cond: dict, level_ref: dict | None, onshore
         if _value(scores, "swell_direction_score") < MISALIGNED_SWELL:
             return f"houle mal orientée pour ce spot ({text})"
         if level_ref:
-            on_spot = height * _value(scores, "swell_direction_score") / 100
+            on_spot = height * _value(scores, "swell_direction_score") / 100 * exposure(cond)
             if on_spot < level_ref["swell_height_ideal_min"]:
                 return (f"houle petite pour ton niveau ({fr_number(on_spot)} m sur le spot, idéal à partir de "
                         f"{fr_number(level_ref['swell_height_ideal_min'])} m)")

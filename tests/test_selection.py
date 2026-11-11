@@ -110,3 +110,30 @@ def test_export_table():
     assert (row["spot"], row["creneau"], row["score_global"], row["houle_large"]) == (
         "Le Loc'h", "9 h – 10 h", 90, "0,8 m, 11 s d’ouest")
     assert row["houle_spot"] == "0,8 m, bien orientée" and row["vigilance"] == "Marée peu favorable."
+
+
+def test_moroccan_cities_use_local_time():
+    # Novembre 2026 : Paris = UTC + 1, Maroc = UTC (retour à l'heure GMT le 20/09/2026)
+    day = dt.date(2026, 11, 25)
+    assert selection.city_timezone("Lorient") == "Europe/Paris"
+    start, end = selection.utc_bounds([day], selection.city_timezone("Taghazout"))
+    assert start.isoformat() == "2026-11-25T00:00:00+00:00" and end.isoformat() == "2026-11-26T00:00:00+00:00"
+    utc_9h = pd.DataFrame([{"forecast_datetime": "2026-11-25T09:00:00+00:00"}])
+    assert selection.with_local_time(utc_9h, selection.city_timezone("Agadir"))["local_hour"].iloc[0] == 9
+    assert selection.with_local_time(utc_9h, selection.city_timezone("Brest"))["local_hour"].iloc[0] == 10
+
+
+def test_moroccan_spots_found_from_taghazout_only():
+    spots = pd.concat([SPOTS, pd.DataFrame([
+        {"spot_id": "anchor_point", "spot_name": "Anchor Point", "department": "Agadir Ida-Outanane",
+         "localisation_lat": 30.5450, "localisation_lon": -9.7271}])], ignore_index=True)
+    assert list(selection.spots_within(spots, "Taghazout", 100)["spot_id"]) == ["anchor_point"]
+    assert "anchor_point" not in list(selection.spots_within(spots, "Lorient", 300)["spot_id"])
+
+
+def test_cities_by_country():
+    assert selection.cities_in("Maroc") == ["Agadir", "Imsouane", "Taghazout", "Tamraght"]
+    assert "Lorient" in selection.cities_in("France") and "Agadir" not in selection.cities_in("France")
+    assert sum(len(selection.cities_in(c)) for c in selection.COUNTRIES) == len(selection.CITIES)
+    for country, city in selection.DEFAULT_CITIES.items():
+        assert selection.city_country(city) == country

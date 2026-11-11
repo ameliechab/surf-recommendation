@@ -167,3 +167,18 @@ def test_ideal_swell_near_a_bound_is_qualified():
     assert "en haut de fourchette (2,4 m sur le spot" in high
     middle = explain.explain(row, fc | {"swell_height_m": 1.8}, pro)["summary"]
     assert middle.startswith("Houle idéale pour ton niveau (1,8 m d’ouest)")
+
+
+def test_sheltered_spot_shows_the_useful_height():
+    # Agadir (abri 0,5), 1,8 m bien orientés au large : 0,9 m sur le spot
+    fc = COND | {"swell_height_m": 1.8, "swell_exposure": 0.5}
+    spot = LA_TORCHE | {"swell_exposure": 0.5}
+    row = score.score_hour(fc, spot, "debutant", DEBUTANT)
+    assert row["is_eligible"]
+    items = dict(explain.conditions_list(fc, row))
+    assert items["Houle sur le spot"] == "0,9 m, bien orientée, spot abrité"
+    summary = explain.explain(row, fc, DEBUTANT)["summary"]
+    assert "environ 0,9 m utiles : 1,8 m au large d’ouest, spot abrité" in summary
+    # spot exposé : rien ne change
+    assert dict(explain.conditions_list(COND, {"swell_direction_score": 100}))["Houle sur le spot"] == \
+        "0,7 m, bien orientée"

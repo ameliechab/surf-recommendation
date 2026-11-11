@@ -42,3 +42,14 @@ def test_detail_shows_remarks_and_warnings():
                    "contributions": [], "onshore_points": 0}
     html = ui.detail_html(rec, [("Houle au large", "1 m")], explanation)
     assert '<p class="fyw-remark">Vent de travers.</p>' in html and '<p class="fyw-warn">Marée peu favorable.</p>' in html
+
+
+def test_local_time_note():
+    assert ui.local_time_note("Lorient") == ""
+    assert "heure locale (Maroc)" in ui.local_time_note("Taghazout")
+
+
+def test_hero_mentions_covered_regions_without_limiting_the_tagline():
+    hero = ui.hero_html()
+    assert "Les meilleurs créneaux de surf, heure par heure, selon ton niveau*." in hero
+    assert "Bretagne et Maroc (région de Taghazout)" in hero

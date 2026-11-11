@@ -9,7 +9,7 @@ Les tables reprennent la section « Modèle de données » du doc. Les choix d'i
 | Table | Grain | Source | Choix d'implémentation |
 |---|---|---|---|
 | `surf_spot_properties` | 1 ligne par spot | Sheet « Ref - surf_spot_properties » | `spot_id` en clé, en minuscules. Coordonnées et orientation bornées par des CHECK. |
-| `surf_spot_conditions_reference` | 1 ligne par spot | Sheet « Ref - surf_spot_conditions_ref » | Clé étrangère vers le spot. `ideal_tide_stage` vaut `toutes` par défaut. Les fenêtres circulaires (ex. 330 → 30) sont acceptées. |
+| `surf_spot_conditions_reference` | 1 ligne par spot | Sheet « Ref - surf_spot_conditions_ref » | Clé étrangère vers le spot. `ideal_tide_stage` vaut `toutes` par défaut. Les fenêtres circulaires (ex. 330 → 30) sont acceptées. `swell_exposure` (coefficient d'abri, 0,1 à 1, vide = 1) ajouté par `sql/009_swell_exposure.sql`. |
 | `surf_level_conditions_reference` | 1 ligne par niveau | Sheet « Ref - surf_level_conditions_ref » | Les CHECK imposent `min ≤ idéal min ≤ idéal max ≤ max` : un seuil mal saisi est refusé par la base elle-même. |
 | `marine_forecast` | 1 ligne par spot et par heure | Open-Meteo + `tide.py` | Unicité `(spot_id, forecast_datetime)` : chaque collecte met à jour les heures existantes, sans doublon, puis supprime les heures antérieures à J-1. |
 | `spot_hour_scores` | 1 ligne par spot, heure et niveau | `score.py` | Les CHECK garantissent qu'un créneau non éligible a une raison et pas de score global. |
@@ -29,7 +29,7 @@ Le doc prévoit une saisie humaine dans Google Sheets. Le script lit chaque ongl
 | Décimales françaises acceptées | `1,2` → `1.2` |
 | Nombres transformés en dates par Google Sheets rejetés | `01/02` à la place de `1,2` → erreur explicite |
 | Valeurs contrôlées contre les listes du doc | `min_level` ∈ {debutant, intermediaire, avance, expert, pro} |
-| Bornes vérifiées | orientations 0–360, crowd 1–5, houle 0–10 m |
+| Bornes vérifiées | orientations 0–360, crowd 1–5, coefficient d'abri 0,1–1, houle 0–10 m |
 | Seuils ordonnés par niveau | `swell_height_min ≤ … ≤ swell_height_max` |
 | Cohérence entre onglets | chaque spot des conditions existe dans les propriétés |
 
@@ -56,7 +56,7 @@ Pour chaque spot de `surf_spot_properties` (lus en base, donc un spot ajouté au
 - **Unités et conventions du doc :** heures en UTC (`timezone=GMT`), vent en km/h, directions en « d'où ça vient », comme les fenêtres du référentiel.
 - **Fenêtre :** `past_days=1` et `forecast_days=8`. Le jour passé et le jour en plus servent à encadrer chaque heure utile par une basse mer et une pleine mer, nécessaires au calcul de la marée.
 - **Sobriété :** une seule requête par API pour tous les spots (Open-Meteo accepte des listes de coordonnées), soit 2 appels par collecte. En cas d'échec : 3 essais avec attente croissante, puis un nouvel essai spot par spot.
-- **Purge :** une fois la collecte réussie, les heures antérieures à J-1 (début de la fenêtre renvoyée par Open-Meteo) sont supprimées. La table garde ainsi environ 3 000 lignes. Si un spot échoue, rien n'est supprimé.
+- **Purge :** une fois la collecte réussie, les heures antérieures à J-1 (début de la fenêtre renvoyée par Open-Meteo) sont supprimées. La table garde ainsi environ 7 100 lignes (33 spots × 216 h). Si un spot échoue, rien n'est supprimé.
 - **Traçabilité :** `data_source` et `retrieved_at` sur chaque ligne. Le `forecast_retrieved_at` des scores pointe vers cette collecte.
 - Le script sort en erreur si un spot échoue : le scoring n'est alors pas lancé, et l'app garde les derniers scores, avec leur date.
 
@@ -77,7 +77,7 @@ Les trois requêtes de contrôle se lancent dans le SQL Editor de Supabase, en l
 
 | Requête | Ce qu'elle vérifie | Résultat |
 |---|---|---|
-| `003_checks.sql` | 14 spots tous renseignés et collectés, collecte de moins de 13 h, prévisions jusqu'à J+7, aucune heure manquante, aucune valeur vide sur la houle, le vent, les températures et la hauteur d'eau, valeurs plausibles, 3 stades de marée présents | 20 contrôles sur 20 OK |
+| `003_checks.sql` | Spots tous renseignés et collectés (33 aujourd'hui), collecte de moins de 13 h, prévisions jusqu'à J+7, aucune heure manquante, aucune valeur vide sur la houle, le vent, les températures et la hauteur d'eau, valeurs plausibles, 3 stades de marée présents | 20 contrôles sur 20 OK |
 | `004_null_columns.sql` | Taux de remplissage de chaque colonne | 100 % partout, sauf les 3 colonnes de marée (96 %, ce sont les heures de bord de fenêtre) et `tide_coefficient` (0 %, prévu en V2) |
 | `005_tide_check.sql` | Le stade suit la règle du doc. L'eau monte bien quand la marée est montante et baisse quand elle est descendante. Les basses et pleines mers sont bien des creux et des pics. | 0 erreur. Environ 12,2 h entre deux basses mers, ce qui correspond au cycle semi-diurne réel (12 h 25). |
 

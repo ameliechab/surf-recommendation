@@ -5,7 +5,7 @@ Le module s'appelle selection.py et non select.py : « select » est un module d
 Sections « Filtrage géographique », « Filtrage temporel », « Classement » et
 « Sélection des recommandations » du doc :
 - distance ville de départ -> spot <= distance max (à vol d'oiseau) ;
-- date et heure en heure de Paris (forecast_datetime est en UTC) ;
+- date et heure en heure locale de la ville de départ (forecast_datetime est en UTC) ;
 - par spot et par jour : meilleur créneau, étendu aux heures consécutives dont le
   score reste >= score_max - 10 ;
 - 5 résultats au maximum par jour, score minimum 50 ;
@@ -19,7 +19,7 @@ import pandas as pd
 
 from explain import fr_date, slot_label
 
-TIMEZONE = "Europe/Paris"
+TIMEZONE = "Europe/Paris"  # fuseau par défaut (et celui des dates affichées dans le pied de page)
 MIN_SCORE = 50          # seuil d'affichage
 MAX_RESULTS = 5         # par jour
 SLOT_TOLERANCE = 10     # créneau étendu tant que le score reste >= score_max - 10
@@ -35,7 +35,37 @@ CITIES = {
     "Morlaix": (48.5776, -3.8280), "Nantes": (47.2184, -1.5536), "Pontivy": (48.0680, -2.9628),
     "Quimper": (47.9960, -4.1024), "Quimperlé": (47.8728, -3.5498), "Rennes": (48.1173, -1.6778),
     "Saint-Brieuc": (48.5136, -2.7603), "Saint-Malo": (48.6493, -2.0257), "Vannes": (47.6582, -2.7608),
+    # Maroc (région de Taghazout)
+    "Agadir": (30.4202, -9.5982), "Imsouane": (30.8403, -9.8226), "Tamraght": (30.5130, -9.6810),
+    "Taghazout": (30.5446, -9.7090),
 }
+
+# Pays de chaque ville (France par défaut) : sert au libellé de la liste et au fuseau horaire.
+CITY_COUNTRIES = {"Agadir": "Maroc", "Imsouane": "Maroc", "Tamraght": "Maroc", "Taghazout": "Maroc"}
+# Le Maroc est revenu définitivement à l'heure GMT le 20 septembre 2026 (décret n° 2.26.530).
+# On fixe « UTC » plutôt que « Africa/Casablanca » : ce changement est récent et une base de
+# fuseaux horaires pas à jour (paquet tzdata ancien) afficherait encore les heures en UTC + 1.
+COUNTRY_TIMEZONES = {"France": "Europe/Paris", "Maroc": "UTC"}
+
+
+def city_country(city: str) -> str:
+    return CITY_COUNTRIES.get(city, "France")
+
+
+def city_timezone(city: str) -> str:
+    """Les horaires et les dates sont ceux du lieu de surf : le Maroc (UTC) a une heure
+    de retard sur Paris en hiver et deux en été."""
+    return COUNTRY_TIMEZONES[city_country(city)]
+
+
+COUNTRIES = list(COUNTRY_TIMEZONES)  # ordre d'affichage du choix du pays
+DEFAULT_CITIES = {"France": "Lorient", "Maroc": "Taghazout"}  # ville proposée quand on change de pays
+
+
+def cities_in(country: str) -> list[str]:
+    """Villes de départ d'un pays, par ordre alphabétique."""
+    return sorted(c for c in CITIES if city_country(c) == country)
+
 
 INELIGIBILITY_MESSAGES = {
     "houle_trop_faible": "Mer trop plate pour ton niveau ce jour-là.",
@@ -77,20 +107,20 @@ def spots_within(spots: pd.DataFrame, city: str, max_km: float) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Heure locale
 # ---------------------------------------------------------------------------
-def with_local_time(df: pd.DataFrame) -> pd.DataFrame:
-    """Ajoute local_date et local_hour (heure de Paris) à partir de forecast_datetime (UTC)."""
+def with_local_time(df: pd.DataFrame, tz: str = TIMEZONE) -> pd.DataFrame:
+    """Ajoute local_date et local_hour (heure locale tz) à partir de forecast_datetime (UTC)."""
     out = df.copy()
     out["forecast_datetime"] = pd.to_datetime(out["forecast_datetime"], utc=True)
-    local = out["forecast_datetime"].dt.tz_convert(TIMEZONE)
+    local = out["forecast_datetime"].dt.tz_convert(tz)
     out["local_date"] = local.dt.date
     out["local_hour"] = local.dt.hour
     return out
 
 
-def utc_bounds(days: list[dt.date]) -> tuple[pd.Timestamp, pd.Timestamp]:
-    """Début du premier jour et fin du dernier jour (heure de Paris), en UTC, pour la requête."""
-    start = pd.Timestamp(min(days)).tz_localize(TIMEZONE)
-    end = pd.Timestamp(max(days) + dt.timedelta(days=1)).tz_localize(TIMEZONE)
+def utc_bounds(days: list[dt.date], tz: str = TIMEZONE) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Début du premier jour et fin du dernier jour (heure locale tz), en UTC, pour la requête."""
+    start = pd.Timestamp(min(days)).tz_localize(tz)
+    end = pd.Timestamp(max(days) + dt.timedelta(days=1)).tz_localize(tz)
     return start.tz_convert("UTC"), end.tz_convert("UTC")
 
 
@@ -179,7 +209,7 @@ def recommend(scores: pd.DataFrame, spots: pd.DataFrame, city: str, max_km: floa
               days: list[dt.date], hour_from: int, hour_to: int, level: str) -> list[DayResult]:
     """Recherche complète : un DayResult par jour, avec le message d'absence le cas échéant."""
     nearby = spots_within(spots, city, max_km)
-    scores = with_local_time(scores) if "local_date" not in scores else scores
+    scores = with_local_time(scores, city_timezone(city)) if "local_date" not in scores else scores
     results = []
     for day in days:
         res = recommend_day(scores, nearby, day, hour_from, hour_to)

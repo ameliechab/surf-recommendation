@@ -39,6 +39,8 @@ create table if not exists public.surf_spot_conditions_reference (
     ideal_tide_stage            text not null default 'toutes'
                                 check (ideal_tide_stage in ('basse','mi-maree','pleine','montante','descendante','toutes')),
     crowd_level                 smallint check (crowd_level between 1 and 5),  -- V2, non utilisé par l'algo
+    swell_exposure              numeric(3, 2)                                  -- 1 ou vide = spot exposé, 0,5 = baie abritée
+                                check (swell_exposure is null or swell_exposure between 0.1 and 1),
     updated_at                  timestamptz not null default now()
 );
 

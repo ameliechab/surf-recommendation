@@ -22,7 +22,7 @@ recent as (  -- uniquement les heures de la dernière collecte (fenêtre -1 j / 
 checks(ordre, controle, resultat, attendu, ok) as (
     -- 1. Référentiels (Google Sheet -> Supabase)
     select 1, 'Spots dans surf_spot_properties',
-           (select n from spots)::text, '14 (ou ton nombre de spots)',
+           (select n from spots)::text, '33 (ou ton nombre de spots)',
            (select n from spots) > 0
     union all
     select 2, 'Spots sans conditions (surf_spot_conditions_reference)',

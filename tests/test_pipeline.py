@@ -77,3 +77,16 @@ def test_purge_keeps_the_collected_window():
     # même résultat si l'heure est donnée à l'heure de Paris
     paris = dt.timezone(dt.timedelta(hours=1))
     assert purge_cutoff(now.astimezone(paris), past_days=1) == purge_cutoff(now, past_days=1)
+
+
+def test_swell_exposure_is_optional_and_bounded():
+    base = {"spot_id": "x", "min_level": "Débutant", "ideal_swell_orientation_min": 280,
+            "ideal_swell_orientation_max": 340, "ideal_wind_orientation_min": 20,
+            "ideal_wind_orientation_max": 110, "ideal_tide_stage": "toutes", "crowd_level": 3}
+    df = pd.DataFrame([base | {"spot_id": "agadir", "swell_exposure": "0,5"},
+                       base | {"spot_id": "anza", "swell_exposure": None}])
+    rows, errors = clean_table("surf_spot_conditions_reference", df)
+    assert not errors and rows[0]["swell_exposure"] == 0.5 and rows[1]["swell_exposure"] is None
+    _, errors = clean_table("surf_spot_conditions_reference",
+                            pd.DataFrame([base | {"swell_exposure": 1.5}]))
+    assert len(errors) == 1 and "hors de l'intervalle" in errors[0]

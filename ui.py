@@ -7,6 +7,7 @@ import html
 import math
 
 from explain import fr_number
+from selection import city_country
 
 OCEAN = "#1546A0"
 INK = "#13203F"
@@ -72,11 +73,14 @@ CSS = f"""
 .fyw-hero .fyw-question {{ font-weight: 800; font-size: 34px; line-height: 1.15; letter-spacing: -0.6px;
   margin: 18px 0 8px; max-width: 60%; position: relative; z-index: 1; }}
 .fyw-hero .fyw-tagline {{ font-size: 14px; color: #C9D6F2; max-width: 55%; position: relative; z-index: 1; }}
+.fyw-hero .fyw-coverage {{ font-size: 12px; color: #9FB3DD; max-width: 55%; margin-top: 6px;
+  position: relative; z-index: 1; }}
 .fyw-streak {{ position: absolute; right: -40px; left: 42%; border-radius: 99px; filter: blur(3px); }}
 @media (max-width: 640px) {{
   .fyw-hero {{ padding: 22px 22px 70px; min-height: 0; }}
   .fyw-hero .fyw-question {{ font-size: 26px; max-width: 100%; margin-top: 12px; }}
-  .fyw-hero .fyw-tagline {{ display: none; }}
+  .fyw-hero .fyw-tagline, .fyw-hero .fyw-star {{ display: none; }}
+  .fyw-hero .fyw-coverage {{ max-width: 100%; margin-top: 10px; }}
   .fyw-streak {{ left: 18%; }}
 }}
 
@@ -132,6 +136,10 @@ STREAKS = [(0.34, 8, SUNSET[0]), (0.44, 4, SUNSET[1]), (0.52, 16, SUNSET[2]), (0
            (0.71, 12, SUNSET[2]), (0.80, 4, SUNSET[3]), (0.87, 9, SUNSET[1])]
 
 
+# Zones couvertes, affichées sous l'accroche (à mettre à jour quand on ajoute une région)
+COVERAGE = "Spots couverts pour l’instant : Bretagne et Maroc (région de Taghazout)."
+
+
 def hero_html() -> str:
     """Bandeau d'en-tête : dégradé océan et traînées de coucher de soleil (pose longue)."""
     streaks = "".join(
@@ -140,8 +148,15 @@ def hero_html() -> str:
         for top, height, color in STREAKS)
     return (f'<div class="fyw-hero">{streaks}<div class="fyw-brand">FindYourWave</div>'
             '<div class="fyw-question">Où surfer cette semaine&nbsp;?</div>'
-            '<div class="fyw-tagline">Les meilleurs créneaux de Bretagne, heure par heure, selon ton niveau.</div>'
+            f'<div class="fyw-tagline">Les meilleurs créneaux de surf, heure par heure, selon ton niveau*.</div>'
+            f'<div class="fyw-coverage"><span class="fyw-star">* </span>{COVERAGE}</div>'
             '</div>')
+
+
+def local_time_note(city: str) -> str:
+    """Précision ajoutée sous la carte quand les horaires ne sont pas ceux de la France."""
+    country = city_country(city)
+    return "" if country == "France" else f" Horaires en heure locale ({country})."
 
 
 # ---------------------------------------------------------------------------

@@ -16,7 +16,7 @@ import pandas as pd
 
 import db
 
-SCORING_VERSION = "v1"
+SCORING_VERSION = "v1.1"  # v1.1 : coefficient d'abri (swell_exposure) des spots abrités
 HORIZON_HOURS = 168  # 7 jours de scores à partir de l'heure en cours
 
 # Poids du doc (inchangés en v1)
@@ -94,6 +94,13 @@ def swell_direction_factor(gap):
     return interpolate(gap, 60, 90, 0.2, 0.0)
 
 
+def swell_exposure(spot: dict) -> float:
+    """Part de la houle du large qui atteint le spot (1 = spot exposé, 0,5 = baie abritée).
+    Vide dans le Sheet = 1."""
+    value = spot.get("swell_exposure")
+    return 1.0 if value is None else float(value)
+
+
 def height_score(h, ref):
     if h < ref["swell_height_min"]:
         return interpolate(h, 0, ref["swell_height_min"], 0, 30)
@@ -162,11 +169,12 @@ def score_hour(fc: dict, spot: dict, level: str, ref: dict) -> dict:
     if any(fc.get(c) is None for c in REQUIRED):
         return row | {"ineligibility_reason": "donnees_manquantes"}
 
-    # Houle : la hauteur est réduite quand la houle arrive hors de la fenêtre du spot
+    # Houle : la hauteur est réduite quand la houle arrive hors de la fenêtre du spot,
+    # et dans les spots abrités (baie, port), où les vagues restent plus petites qu'au large
     low, high = window(spot["ideal_swell_orientation_min"], spot["ideal_swell_orientation_max"],
                        spot["spot_orientation_deg"], 0, DEFAULT_SWELL_HALF_WIDTH)
     factor = swell_direction_factor(distance_to_window(fc["swell_direction_deg"], low, high))
-    effective_height = fc["swell_height_m"] * factor
+    effective_height = fc["swell_height_m"] * factor * swell_exposure(spot)
     if effective_height > ref["swell_height_max"]:
         return row | {"ineligibility_reason": "houle_trop_forte"}
     if effective_height < ref["swell_height_min"]:

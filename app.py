@@ -74,6 +74,13 @@ def load_spots() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=CACHE_SECONDS, show_spinner=False)
+def load_exposures() -> dict:
+    """Coefficient d'abri par spot (vide = 1), pour expliquer la houle « sur le spot »."""
+    rows = client().table("surf_spot_conditions_reference").select("spot_id, swell_exposure").execute().data
+    return {r["spot_id"]: None if r["swell_exposure"] is None else float(r["swell_exposure"]) for r in rows}
+
+
+@st.cache_data(ttl=CACHE_SECONDS, show_spinner=False)
 def load_level(level: str) -> dict | None:
     rows = client().table("surf_level_conditions_reference").select("*").eq("surf_level", level).execute().data
     if not rows:
@@ -119,7 +126,7 @@ def clean(value):
 # ---------------------------------------------------------------------------
 today = pd.Timestamp.now(tz=selection.TIMEZONE).date()
 last_day = today + dt.timedelta(days=6)  # les scores couvrent 7 jours
-DEFAULTS = {"level": "intermediaire", "city": "Lorient", "max_km": 100,
+DEFAULTS = {"level": "intermediaire", "country": "France", "city": "Lorient", "max_km": 100,
             "days": (today, today + dt.timedelta(days=1)), "hours": (8, 20)}
 
 
@@ -139,13 +146,31 @@ st.session_state["f_days"] = clamp_days(st.session_state["f_days"])
 params = st.session_state.setdefault("params", DEFAULTS.copy())  # dernière recherche lancée
 params["days"] = clamp_days(params["days"])
 
+
+def on_country_change() -> None:
+    """Changer de pays propose la ville par défaut de ce pays (Lorient, Taghazout)."""
+    country = st.session_state["f_country"] or st.session_state["country_kept"]
+    st.session_state["f_country"] = st.session_state["country_kept"] = country
+    if selection.city_country(st.session_state["f_city"]) != country:
+        st.session_state["f_city"] = selection.DEFAULT_CITIES[country]
+
+
+st.session_state.setdefault("country_kept", st.session_state["f_country"])
 st.html(ui.hero_html())
+
+# Le pays est choisi hors du formulaire : dans un st.form, rien ne se met à jour avant
+# le clic sur le bouton, et la liste des villes ne suivrait pas le pays choisi.
+st.segmented_control("Pays", selection.COUNTRIES, selection_mode="single", key="f_country",
+                     on_change=on_country_change)
+country = st.session_state["country_kept"]
+if st.session_state["f_city"] not in selection.cities_in(country):
+    st.session_state["f_city"] = selection.DEFAULT_CITIES[country]
 
 with st.form("search", border=False):
     st.segmented_control("Ton niveau", LEVELS, format_func=selection.LEVEL_LABELS.get,
                          selection_mode="single", key="f_level")
     left, right = st.columns(2)
-    left.selectbox("Ville de départ", sorted(selection.CITIES), key="f_city")
+    left.selectbox("Ville de départ", selection.cities_in(country), key="f_city")
     right.slider("Distance max", 10, 300, step=10, format="%d km", key="f_max_km")
     left, right = st.columns(2)
     left.date_input("Dates", min_value=today, max_value=last_day, format="DD/MM/YYYY", key="f_days")
@@ -163,11 +188,12 @@ with st.form("search", border=False):
 first, last = params["days"]
 first, last = max(first, today), min(last, last_day)
 search_days = [first + dt.timedelta(days=i) for i in range((last - first).days + 1)] or [today]
-start, end = selection.utc_bounds(search_days)
+start, end = selection.utc_bounds(search_days, selection.city_timezone(params["city"]))
 hour_from, hour_to = params["hours"]
 
 try:
     spots = load_spots()
+    exposures = load_exposures()
     level_ref = load_level(params["level"])
     scores = load_scores(params["level"], start.isoformat(), end.isoformat())
     forecasts = load_forecasts(start.isoformat(), end.isoformat())
@@ -184,6 +210,7 @@ for res in results:
         cond = {}
         if forecast_index is not None and (rec["spot_id"], rec["best_datetime"]) in forecast_index.index:
             cond = {k: clean(v) for k, v in forecast_index.loc[(rec["spot_id"], rec["best_datetime"])].items()}
+            cond["swell_exposure"] = exposures.get(rec["spot_id"])
         scores_row = {k: clean(v) for k, v in rec["scores"].items()}
         if cond.get("wind_speed_kmh") is not None and cond.get("swell_height_m") is not None:
             rec["conditions"] = explain.conditions_list(cond, scores_row)
@@ -235,7 +262,7 @@ for tab, res in zip(tabs, results):
         n = len(res.recommendations)
         st.html(f'<div class="fyw-section">Sur la carte</div><div class="fyw-caption">'
                 f'{"Le spot" if n == 1 else f"Les {n} spots"} du {explain.fr_date(res.day)}, '
-                f'à moins de {params["max_km"]} km de {params["city"]}.</div>')
+                f'à moins de {params["max_km"]} km de {params["city"]}.{ui.local_time_note(params["city"])}</div>')
         show_map(res.recommendations)
 
 # Pied de page : fraîcheur des scores, rafraîchir, export
