@@ -9,9 +9,9 @@
 FindYourWave note 33 spots (14 en Bretagne, 19 au Maroc autour de Taghazout) pour chacun des 5 niveaux de surf (de débutant à pro), à partir des prévisions de houle, de vent et de marée. L'application propose, pour chaque jour choisi, les 5 meilleurs créneaux autour de ta ville de départ, et explique en français pourquoi chacun est recommandé et ce qui peut poser problème.
 
 <p align="center">
-  <img src="docs/images/app-recherche.jpg" alt="Formulaire de recherche : niveau, ville de départ, distance, dates et horaires" width="32%">
-  <img src="docs/images/app-resultat.jpg" alt="Résultat détaillé : bande horaire, houle au large et sur le spot, explication" width="32%">
-  <img src="docs/images/app-carte.jpg" alt="Carte des spots recommandés, colorés selon leur score" width="32%">
+  <img src="docs/images/app-recherche.jpg" alt="Formulaire de recherche : pays, niveau, ville de départ, distance, dates et horaires" width="32%">
+  <img src="docs/images/app-resultat.jpg" alt="Résultat détaillé à Imsouane : bande horaire, houle au large et sur le spot (spot abrité), explication" width="32%">
+  <img src="docs/images/app-carte.jpg" alt="Carte des spots recommandés autour de Taghazout, colorés selon leur score" width="32%">
 </p>
 
 ## Liens utiles
